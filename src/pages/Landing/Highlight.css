@@ -1,0 +1,68 @@
+/* Highlights Section Styling */
+.highlight-section {
+  padding: 40px 0;
+  text-align: center;
+  background-color: #fcfafa; /* Light background for the section */
+}
+
+.highlight-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 40px;
+  color: #333;
+}
+
+.highlight-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.highlight-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between; /* Ensures content is spread out evenly */
+  height: 100%; /* Makes sure all items are of equal height */
+  background-color: #ffffff; /* White background for the item */
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transition: box-shadow 0.3s ease;
+  padding: 20px;
+}
+
+.highlight-item:hover {
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15); /* Hover effect for better interactivity */
+}
+
+.highlight-image {
+  width: 100%;
+  height: 200px;
+  border: 2px dashed #ff6f61;
+  margin-bottom: 20px;
+  background-color: #f2d1d1; /* Light red placeholder */
+}
+
+.highlight-subtitle {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #0277bd; /* Dark blue for subtitles */
+  margin-bottom: 15px;
+}
+
+.highlight-description {
+  font-size: 1rem;
+  font-weight: 400;
+  text-align: justify;
+  color: #555;
+  flex-grow: 1; /* Makes sure the description takes up the remaining space */
+}
+
+/* Bootstrap Grid Adjustments */
+@media (max-width: 768px) {
+  .highlight-container .row {
+    text-align: center; /* Center text on small screens */
+  }
+
+  .highlight-item {
+    padding: 20px; /* Adjust padding on small screens */
+  }
+}

@@ -1,0 +1,31 @@
+/* src/Navbar.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+body, .navbar {
+  font-family: 'Inter', sans-serif;
+}
+
+.navbar-brand {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.navbar-brand img {
+  height: 40px;
+}
+
+.custom-btn {
+  font-size: 0.875rem;
+  padding: 5px 12px;
+  border-radius: 4px;
+  line-height: 1.5;
+  height: auto;
+  width: 100%;
+}
+
+@media (min-width: 992px) {
+  .custom-btn {
+    width: auto;
+    padding: 8px 20px;
+  }
+}

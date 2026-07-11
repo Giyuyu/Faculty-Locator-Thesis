@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1004073148218",
+    "firebase_url": "https://fac-loc-default-rtdb.firebaseio.com",
+    "project_id": "fac-loc",
+    "storage_bucket": "fac-loc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1004073148218:android:708587a875ae6baf083a03",
+        "android_client_info": {
+          "package_name": "com.example.mobile_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaGAnWV8RDAjjX6lU_KgYc26AeQTTJsgQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
