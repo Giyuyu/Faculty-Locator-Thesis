@@ -1,6 +1,84 @@
 # Faculty Locator
 
-STI Locator is a faculty locator and room status system with a React/Vite web app, a Flutter mobile counterpart, and Python desktop utilities for device/RFID login.
+STI Locator is a faculty locator and room status system with:
+
+- React/Vite web app for Admin, Faculty, Student, schedules, rooms, and live tracker views
+- Flutter mobile counterpart
+- Python desktop app for room/device assignment, RFID registration, and faculty login/logout
+- Firebase Realtime Database as the shared backend
+
+## Fresh Device Setup
+
+Install these once on the new device:
+
+- Git
+- Node.js LTS
+- Python 3.11 or newer
+- Flutter SDK, only if the mobile app will be used
+
+Then clone and install:
+
+```bash
+git clone https://github.com/Giyuyu/Faculty-Locator-Thesis.git
+cd Faculty-Locator-Thesis
+setup.bat
+```
+
+The setup script installs:
+
+- Web dependencies with `npm install`
+- Python desktop dependencies inside `.venv`
+- Flutter dependencies with `flutter pub get`, when Flutter is installed
+
+## Run The System
+
+### Web App
+
+```bat
+run-web.bat
+```
+
+This starts the React/Vite app. Open the URL shown in the terminal, usually:
+
+```text
+http://localhost:5173
+```
+
+### Desktop Faculty Login
+
+```bat
+run-desktop-login.bat
+```
+
+Use this on room computers where faculty will scan RFID cards or manually enter their faculty ID.
+
+### Desktop Admin Tool
+
+```bat
+run-desktop-admin.bat
+```
+
+Use this for room/device assignment and faculty RFID registration.
+
+### Mobile App
+
+```bat
+run-mobile-web.bat
+```
+
+This runs the Flutter app in Chrome for testing.
+
+## Device Migration Notes
+
+When cloning to a new device, local machine settings are intentionally not included in Git:
+
+- `desktop_app/room_config.json`
+- `desktop_app/rfid_reader_config.json`
+- `.venv/`
+- `node_modules/`
+- Flutter build folders
+
+This is expected. Each physical desktop should set its own assigned room and RFID reader settings through the desktop admin/login tools.
 
 ## Project Structure
 
@@ -19,15 +97,14 @@ STI Locator is a faculty locator and room status system with a React/Vite web ap
 `-- archive/legacy/      # Old or unused legacy files kept for reference
 ```
 
-## Web App
+## Manual Commands
+
+If you prefer running parts manually:
 
 ```bash
 npm install
 npm run dev
-npm run build
 ```
-
-## Mobile App
 
 ```bash
 cd "Mobile App"
@@ -35,13 +112,9 @@ flutter pub get
 flutter run
 ```
 
-## Desktop App
-
 ```bash
-cd desktop_app
-setup_python_env.bat
-python login.py
-python admin.py
+python -m venv .venv
+.venv\Scripts\python -m pip install -r desktop_app\requirements.txt
+.venv\Scripts\python desktop_app\login.py
+.venv\Scripts\python desktop_app\admin.py
 ```
-
-The desktop app stores local config in `desktop_app/room_config.json` and uses Firebase for shared data.
