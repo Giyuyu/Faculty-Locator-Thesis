@@ -1,0 +1,106 @@
+/* Ensure no overflow horizontally */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  overflow-x: hidden; /* Prevent horizontal scroll */
+}
+
+/* Ensures the About section occupies the full width and centers content */
+.about-section {
+  padding: 60px 20px;
+  background-color: #e0f7fa;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  min-height: 100vh; /* Ensure the section takes the full height */
+}
+
+/* Flexbox container for images and description */
+.about-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  max-width: 1200px;
+  width: 100%;
+  gap: 30px;
+}
+
+/* Container for images */
+.about-images {
+  display: flex; /* Align images side by side */
+  width: 50%; /* Adjust to fit both images */
+  justify-content: center;
+  position: relative; /* Make the container relative */
+  height: 400px; /* Set a fixed height for better positioning */
+}
+
+/* Style for both images */
+.about-image {
+  position: absolute; /* Allow images to overlap */
+  width: 50%; /* Adjust image size */
+  height: 280px;
+  max-width: 400px; /* Ensure both images are the same size */
+  object-fit: cover;
+  border-radius: 10px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Adjust image 2 to appear on top and slightly offset */
+.about-image:nth-child(2) {
+  left: 0%; /* Adjust image positioning */
+  top: 40%; /* Add some vertical offset */
+  z-index: 2; /* Make sure this image appears above the first one */
+}
+
+/* Description section styling */
+.about-description {
+  width: 50%; /* Right side takes 50% width */
+  text-align: left;
+}
+
+.about-title {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin-bottom: 15px;
+}
+
+.about-subtitle {
+  font-size: 1.5rem;
+  color: #333;
+  margin-bottom: 15px;
+}
+
+.about-description-text {
+  font-size: 1.125rem;
+  color: #555;
+  line-height: 1.6;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .about-content {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .about-images {
+    width: 80%; /* Image container takes more space on smaller screens */
+    margin-bottom: 30px;
+  }
+
+  .about-description {
+    width: 100%;
+    text-align: center;
+  }
+
+  /* Stack images vertically on smaller screens */
+  .about-image {
+    width: 100%; /* Full width for smaller screens */
+    margin-bottom: 15px; /* Add some space between images */
+  }
+}

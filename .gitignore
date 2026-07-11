@@ -1,0 +1,45 @@
+# Logs
+logs
+*.log
+*.err
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Local tools and dependency caches
+.venv/
+.kilo/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Desktop app local device configuration
+desktop_app/room_config.json
+desktop_app/rfid_reader_config.json
+
+# Flutter/Dart
+Mobile App/.dart_tool/
+Mobile App/.flutter-plugins
+Mobile App/.flutter-plugins-dependencies
+Mobile App/build/
+Mobile App/.firebase/
+Mobile App/firebase-debug.log
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

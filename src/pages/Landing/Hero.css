@@ -1,0 +1,89 @@
+/* Hero Section Styling */
+.hero {
+  min-height: 100vh;
+  background-color: #e0f7fa; /* Light blue background color */
+  padding-top: 60px; /* Adjusted to prevent content from being covered by fixed navbar */
+}
+
+.hero-content {
+  max-width: 1200px;
+  width: 100%;
+}
+
+.hero-left {
+  flex: 1;
+  text-align: left;
+}
+
+.hero-title {
+  font-size: 3rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: #0277bd;  /* Dark blue text color for the title */
+}
+
+.hero-description {
+  font-size: 1.2rem;
+  font-weight: 400;
+  margin-bottom: 20px;
+}
+
+.hero-description-small {
+  font-size: 0.9rem;
+  margin-bottom: 30px;
+}
+
+.hero-btn {
+  padding: 15px 30px;
+  font-size: 1.2rem;
+  background-color: #4c7fd9; /* Bright blue for the button */
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 200px;
+  height: 50px;
+}
+
+.hero-btn:hover {
+  background-color: #fbc02d; /* Darker yellow on hover */
+}
+
+/* Hero Right Section - Image */
+.hero-right {
+  flex: 1;
+  text-align: right;
+}
+
+.hero-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+/* Media Query for Mobile Responsiveness */
+@media (max-width: 768px) {
+  .hero-content {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .hero-left {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+
+  .hero-btn {
+    width: 100%;
+    max-width: 300px; /* Make button fit better on mobile */
+  }
+
+  .hero-image {
+    max-width: 80%; /* Make image a bit smaller on mobile */
+  }
+
+  /* Add margin-top to ensure the content isn't blocked by the navbar */
+  .hero {
+    padding-top: 80px; /* Increase the space for mobile */
+  }
+}

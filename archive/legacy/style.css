@@ -1,0 +1,30 @@
+body {
+    text-align: center;
+    font-size: 100%;
+}
+
+h1 {
+    font-family: Verdana, Geneva, Tahoma, sans-serif;
+    color: brown;
+}
+
+img {
+    border: 8px solid red;
+}
+
+p {
+    font-size: 200%;
+}
+
+a:hover {
+    color: blue;
+    text-decoration: underline;
+}
+
+table, th, td {
+    border: 2px solid black;
+    border-collapse: collapse;
+    border-style: dashed;
+    margin: auto;
+    padding: 10px;
+}

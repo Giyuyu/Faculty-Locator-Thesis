@@ -1,0 +1,357 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { ref, set, get, child } from 'firebase/database';
+import { auth, database } from '../../firebase';
+
+function Login() {
+  const navigate = useNavigate();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError('');
+
+    try {
+      // Sign in with Firebase Authentication
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // Store login attempt (success)
+      const attemptRef = ref(database, `login_attempts/${Date.now()}`);
+      await set(attemptRef, {
+        user_id: user.uid,
+        attempted_at: new Date().toISOString(),
+        status: 'success'
+      });
+
+      // Create session
+      const sessionId = `${user.uid}_${Date.now()}`;
+      const sessionRef = ref(database, `sessions/${sessionId}`);
+      await set(sessionRef, {
+        session_id: sessionId,
+        user_id: user.uid,
+        ip_address: '', // Would need server-side to get IP
+        user_agent: navigator.userAgent,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+      });
+
+      // Get user type from Realtime Database
+      const uidRef = ref(database, `users/byUid/${user.uid}`);
+      const snapshot = await get(uidRef);
+
+      if (snapshot.exists()) {
+        const userData = snapshot.val();
+        let userType = userData.userType;
+
+        // Check for admin
+        if (email === 'admin@sti.edu') {
+          userType = 'admin';
+        }
+
+        // Store user info in localStorage
+        localStorage.setItem('currentUser', JSON.stringify({
+          uid: user.uid,
+          email: user.email,
+          userType,
+          name: userData.name || 'Admin',
+          id: userData.id || 'admin',
+          sessionId
+        }));
+
+        // Redirect based on user type
+        if (userType === 'faculty') {
+          navigate('/faculty');
+        } else if (userType === 'student') {
+          navigate('/student');
+        } else if (userType === 'admin') {
+          navigate('/admin');
+        } else {
+          navigate('/faculty');
+        }
+      } else {
+        setError('User data not found. Please contact support.');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+
+      // Log failed login attempt
+      const failedAttemptRef = ref(database, `login_attempts/${Date.now()}_failed`);
+      await set(failedAttemptRef, {
+        user_id: email, // Since we don't have uid for failed attempts, use email
+        attempted_at: new Date().toISOString(),
+        status: 'failed',
+        error_code: err.code
+      });
+
+      if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email.');
+      } else if (err.code === 'auth/wrong-password') {
+        setError('Incorrect password.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Invalid email format.');
+      } else if (err.code === 'auth/network-request-failed') {
+        setError('Network error. Please check your connection.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Clear any existing error when component mounts
+    setError('');
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-cyan-50 py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-gradient-to-br from-blue-400/20 to-cyan-400/20 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-gradient-to-br from-indigo-400/20 to-blue-400/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+        <div className="absolute top-1/2 left-1/4 w-64 h-64 bg-gradient-to-br from-emerald-400/10 to-teal-400/10 rounded-full blur-2xl"></div>
+        <div className="absolute bottom-1/4 right-1/3 w-48 h-48 bg-gradient-to-br from-violet-400/10 to-purple-400/10 rounded-full blur-2xl"></div>
+      </div>
+
+      <div className="max-w-6xl mx-auto relative z-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-16 items-center min-h-[500px]">
+          {/* Left side - Branding & Info */}
+          <div className="text-center md:text-left space-y-6 md:space-y-8 flex flex-col justify-center">
+            {/* Back link */}
+            <div className="flex justify-center md:justify-start">
+              <Link
+                to="/"
+                className="inline-flex items-center px-4 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900 bg-white/70 backdrop-blur-sm rounded-xl border border-slate-200/50 hover:bg-white/90 transition-all duration-200 shadow-sm hover:shadow-md"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back to Home
+              </Link>
+            </div>
+
+            <div className="space-y-4">
+              <div className="mx-auto lg:mx-0 w-20 h-20 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-blue-500/20">
+                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 mb-4 tracking-tight">
+                  Faculty<span className="bg-gradient-to-r from-blue-500 to-cyan-500 bg-clip-text text-transparent"> Tracker</span>
+                </h1>
+                <p className="text-lg text-slate-600 leading-relaxed max-w-lg mx-auto lg:mx-0">
+                  Streamline academic management with our comprehensive faculty location and schedule tracking system.
+                </p>
+              </div>
+            </div>
+
+            {/* Features cards */}
+            <div className="hidden md:block">
+              <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-slate-200/30">
+                <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center">
+                  <svg className="w-5 h-5 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  System Features
+                </h3>
+                <div className="space-y-3.5">
+                  <div className="flex items-start space-x-3 group">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
+                      <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <p className="text-slate-600 text-sm pt-0.5 group-hover:text-slate-800 transition-colors">Real-time faculty location tracking</p>
+                  </div>
+                  <div className="flex items-start space-x-3 group">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
+                      <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-slate-600 text-sm pt-0.5 group-hover:text-slate-800 transition-colors">Automated schedule management</p>
+                  </div>
+                  <div className="flex items-start space-x-3 group">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
+                      <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-slate-600 text-sm pt-0.5 group-hover:text-slate-800 transition-colors">Conflict-free room assignments</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Mobile features - simplified */}
+            <div className="md:hidden grid grid-cols-3 gap-3">
+              <div className="bg-white/70 backdrop-blur-sm rounded-xl p-3 text-center border border-slate-200/30">
+                <svg className="w-5 h-5 mx-auto text-blue-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                <p className="text-xs text-slate-600">Live Tracking</p>
+              </div>
+              <div className="bg-white/70 backdrop-blur-sm rounded-xl p-3 text-center border border-slate-200/30">
+                <svg className="w-5 h-5 mx-auto text-emerald-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10" /></svg>
+                <p className="text-xs text-slate-600">Schedule Auto</p>
+              </div>
+              <div className="bg-white/70 backdrop-blur-sm rounded-xl p-3 text-center border border-slate-200/30">
+                <svg className="w-5 h-5 mx-auto text-violet-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M7 20H2v-2a3 3 0 015.356-1.857" /></svg>
+                <p className="text-xs text-slate-600">Room Assign</p>
+              </div>
+            </div>
+          </div>
+
+            {/* Right side - Login Form */}
+            <div className="flex flex-col justify-center">
+              {/* Header */}
+              <div className="text-center md:text-left mb-8">
+                <h2 className="text-3xl font-bold text-slate-900 mb-2 bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
+                  Welcome Back
+                </h2>
+                <p className="text-slate-600">Sign in to continue to your dashboard</p>
+              </div>
+
+              {/* Login Form */}
+              <form className="space-y-5 bg-white/80 backdrop-blur-lg p-8 rounded-2xl shadow-xl shadow-black/5 border border-slate-200/50" onSubmit={handleLogin}>
+                {/* Email Field */}
+                <div>
+                  <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+                    Email Address
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                      </svg>
+                    </div>
+                    <input
+                      id="email"
+                      name="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      autoComplete="email"
+                      required
+                      className="block w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white placeholder-slate-400"
+                      placeholder="name@example.com"
+                    />
+                  </div>
+                </div>
+
+                {/* Password Field */}
+                <div>
+                  <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-2">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </div>
+                    <input
+                      id="password"
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="current-password"
+                      required
+                      className="block w-full pl-11 pr-12 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white placeholder-slate-400"
+                      placeholder="Enter your password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 pr-4 flex items-center"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <svg className="h-5 w-5 text-slate-400 hover:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      ) : (
+                        <svg className="h-5 w-5 text-slate-400 hover:text-slate-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Remember Me & Forgot Password */}
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center">
+                    <input
+                      id="remember-me"
+                      name="remember-me"
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-700">
+                      Remember me
+                    </label>
+                  </div>
+                  <div className="text-sm">
+                    <a href="javascript:void(0)" onClick={(e) => e.preventDefault()} className="font-medium text-blue-600 hover:text-blue-500 transition-colors">
+                      Forgot password?
+                    </a>
+                  </div>
+                </div>
+
+                {/* Error Message */}
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start">
+                    <svg className="h-5 w-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-sm text-red-700">{error}</p>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 transform hover:scale-[1.01] hover:shadow-lg disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none"
+                >
+                  {isLoading ? (
+                    <span className="flex items-center justify-center">
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Signing in...
+                    </span>
+                  ) : (
+                    'Sign In'
+                  )}
+                </button>
+              </form>
+
+              {/* Sign up link */}
+              <div className="text-center mt-6 pt-6 border-t border-slate-200">
+                <p className="text-sm text-slate-600">
+                  Don't have an account?{' '}
+                  <Link to="/signup" className="font-semibold text-blue-600 hover:text-blue-500 transition-colors">
+                    Create an account
+                  </Link>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default Login;
