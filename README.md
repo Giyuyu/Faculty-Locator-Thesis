@@ -1,2 +1,2 @@
-# Practice
-Practice GitHub
+# Faculty Locator
+
