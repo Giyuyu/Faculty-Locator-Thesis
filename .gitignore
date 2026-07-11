@@ -30,6 +30,10 @@ Mobile App/.dart_tool/
 Mobile App/.flutter-plugins
 Mobile App/.flutter-plugins-dependencies
 Mobile App/build/
+Mobile App/android/.gradle/
+Mobile App/android/app/.gradle/
+Mobile App/android/build/
+Mobile App/android/app/build/
 Mobile App/.firebase/
 Mobile App/firebase-debug.log
 
