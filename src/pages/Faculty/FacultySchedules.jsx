@@ -1028,6 +1028,13 @@ function FacultySchedules() {
     setEditForm({ ...schedule, startTime, endTime });
   };
 
+  const startEditingSchedule = (schedule) => {
+    const { start: startTime, end: endTime } = parseTime(schedule.time);
+    const index = schedules.findIndex((item) => item.scheduleId === schedule.scheduleId);
+    setEditingRow(index);
+    setEditForm({ ...schedule, startTime, endTime });
+  };
+
   const cancelEditingPreview = () => {
     setEditingRow(null);
     setEditForm({});
@@ -1084,9 +1091,14 @@ function FacultySchedules() {
         );
         const roomId = roomRecord?.room_id || '';
         const roomName = editForm.room || 'TBD';
+        const assignedFacultyId = editForm.facultyId || editForm.faculty_id || '';
+        const assignedFaculty = assignedFacultyId
+          ? facultyDirectory[assignedFacultyId] || Object.values(facultyDirectory).find((faculty) => faculty.faculty_id === assignedFacultyId)
+          : null;
+        const assignedFacultyName = assignedFaculty ? facultyDisplayName(assignedFaculty) : '';
         const scheduleId = editForm.scheduleId || editForm.schedule_id || sanitizeId([
           'sched',
-          editForm.facultyId || editForm.faculty_id || currentUser.uid,
+          assignedFacultyId || 'unassigned',
           subjectId,
           roomId || roomName,
           editForm.day,
@@ -1100,7 +1112,7 @@ function FacultySchedules() {
         const updates = {
           [`schedules/${scheduleId}`]: {
             schedule_id: scheduleId,
-            faculty_id: editForm.facultyId || editForm.faculty_id,
+            faculty_id: assignedFacultyId,
             subject_id: subjectId,
             room_id: roomId,
             room_name: roomName,
@@ -1110,6 +1122,7 @@ function FacultySchedules() {
             section: editForm.section || 'TBD',
             semester: editForm.semester || 'TBD',
             school_year: editForm.schoolYear || editForm.school_year || 'TBD',
+            instructor_name: assignedFacultyName || editForm.instructor || '',
             ...(importBatchId ? {
               import_batch_id: importBatchId,
               original_import_batch_id: importBatchId,
@@ -1134,6 +1147,28 @@ function FacultySchedules() {
         }
 
         await update(ref(database), updates);
+
+        const updatedSchedule = {
+          ...editForm,
+          scheduleId,
+          facultyId: assignedFacultyId,
+          assignedFacultyName,
+          instructor: assignedFacultyName || editForm.instructor || 'Unassigned',
+          subjectId,
+          roomId,
+          room: roomName,
+          time: `${editForm.startTime || 'TBD'} - ${editForm.endTime || 'TBD'}`,
+          startTime: editForm.startTime || 'TBD',
+          endTime: editForm.endTime || 'TBD',
+          day: editForm.day || 'TBD',
+          section: editForm.section || 'TBD',
+          subject: editForm.subject || 'TBD',
+          semester: editForm.semester || 'TBD',
+          schoolYear: editForm.schoolYear || editForm.school_year || 'TBD',
+        };
+        setSchedules((current) => current.map((schedule) =>
+          schedule.scheduleId === scheduleId ? updatedSchedule : schedule
+        ));
 
         await update(ref(database, 'lastScheduleUpdate'), {
           name: currentUser.name,
@@ -1166,7 +1201,7 @@ function FacultySchedules() {
   const isAdminUser = currentUser?.userType === 'admin' || currentUser?.roleIds?.includes('admin');
   const currentFacultyRecord = Object.values(facultyDirectory).find((faculty) => faculty.user_id === currentUser?.uid);
   const currentFacultyId = currentFacultyRecord?.faculty_id || currentUser?.facultyId || '';
-  const isOwnSchedule = (schedule) => !isAdminUser && currentFacultyId && schedule.facultyId === currentFacultyId;
+  const isOwnSchedule = (schedule) => currentFacultyId && schedule.facultyId === currentFacultyId;
   const personalSchedules = schedules.filter(isOwnSchedule);
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
   const todayCount = personalSchedules.filter((schedule) => schedule.day === todayName).length;
@@ -2074,12 +2109,7 @@ function FacultySchedules() {
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
                     {filteredViewData.map((schedule, originalIndex) => {
-                        const index = schedules.findIndex(s =>
-                          s.section === schedule.section &&
-                          s.subject === schedule.subject &&
-                          s.day === schedule.day &&
-                          s.time === schedule.time
-                        );
+                        const index = schedules.findIndex(s => s.scheduleId === schedule.scheduleId);
                         const isEditing = editingRow === index;
 
       const canEdit = canManageSchedules;
@@ -2099,7 +2129,7 @@ function FacultySchedules() {
                                   placeholder="Section"
                                 />
                               ) : (
-                                <span className="text-gray-900 dark:text-gray-100 font-medium cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{schedule.section}</span>
+                                <span className="text-gray-900 dark:text-gray-100 font-medium cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{schedule.section}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2112,7 +2142,7 @@ function FacultySchedules() {
                                   placeholder="Subject"
                                 />
                               ) : (
-                                <span className="text-gray-900 dark:text-gray-100 cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{schedule.subject}</span>
+                                <span className="text-gray-900 dark:text-gray-100 cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{schedule.subject}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2125,7 +2155,7 @@ function FacultySchedules() {
                                   placeholder="Room"
                                 />
                               ) : (
-                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{schedule.room}</span>
+                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{schedule.room}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2138,7 +2168,7 @@ function FacultySchedules() {
                                   placeholder="Start Time"
                                 />
                               ) : (
-                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{startTime}</span>
+                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{startTime}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2151,7 +2181,7 @@ function FacultySchedules() {
                                   placeholder="End Time"
                                 />
                               ) : (
-                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{endTime}</span>
+                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{endTime}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2170,7 +2200,7 @@ function FacultySchedules() {
                                   <option value="Saturday">Saturday</option>
                                 </select>
                               ) : (
-                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{schedule.day}</span>
+                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{schedule.day}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2183,7 +2213,7 @@ function FacultySchedules() {
                                   placeholder="Instructor"
                                 />
                               ) : (
-                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{schedule.instructor}</span>
+                                <span className="text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{schedule.instructor}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -2191,7 +2221,7 @@ function FacultySchedules() {
                                 <select
                                   value={editForm.facultyId || ''}
                                   onChange={(e) => {
-                                    const faculty = facultyDirectory[e.target.value];
+                                    const faculty = facultyDirectory[e.target.value] || Object.values(facultyDirectory).find((item) => item.faculty_id === e.target.value);
                                     setEditForm({
                                       ...editForm,
                                       facultyId: e.target.value,
@@ -2229,7 +2259,7 @@ function FacultySchedules() {
                                 </div>
                               ) : canEdit ? (
                                 <button
-                                  onClick={() => startEditingPreview(index)}
+                                  onClick={() => startEditingSchedule(schedule)}
                                   className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
                                 >
                                   Edit
