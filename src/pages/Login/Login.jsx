@@ -95,6 +95,79 @@ const findLinkedProfile = async (userId, roleIds) => {
   return null;
 };
 
+const buildCurrentUserSession = async ({ uid, email, userData, isBuiltInAdmin = false }) => {
+  let userType = userData.role_id;
+  let roleIds = Array.isArray(userData.role_ids) && userData.role_ids.length
+    ? userData.role_ids
+    : [userType || 'student'];
+  let profileId = uid;
+  let profileName = userData.username || email || 'User';
+
+  if (isBuiltInAdmin) {
+    userType = 'admin';
+    roleIds = ['admin'];
+    profileId = 'admin';
+    profileName = 'Admin';
+  } else {
+    const linkedProfile = await findLinkedProfile(uid, roleIds);
+    if (linkedProfile) {
+      profileId = linkedProfile.id;
+      profileName = linkedProfile.name || userData.username || email || 'User';
+      if (!roleIds.includes(userType)) {
+        userType = roleIds[0] || userType;
+      }
+    }
+  }
+
+  const permissions = await getUserEffectivePermissions(roleIds, uid);
+
+  return {
+    uid,
+    email,
+    username: userData.username || email,
+    userType,
+    roleIds,
+    name: profileName,
+    id: profileId,
+    permissions
+  };
+};
+
+const authenticateWithDatabasePassword = async (login, password) => {
+  const snapshot = await get(ref(database, 'users'));
+  if (!snapshot.exists()) return null;
+
+  const normalizedLogin = login.trim().toLowerCase();
+  const match = Object.entries(snapshot.val()).find(([key, value]) => {
+    const user = value || {};
+    const uid = user.user_id || key;
+    return (
+      String(user.username || '').trim().toLowerCase() === normalizedLogin ||
+      String(user.email || '').trim().toLowerCase() === normalizedLogin ||
+      String(uid || '').trim().toLowerCase() === normalizedLogin
+    );
+  });
+
+  if (!match) return null;
+
+  const [key, userData] = match;
+  const uid = userData.user_id || key;
+  const storedPassword = String(userData.password || '');
+  if (!storedPassword || storedPassword === 'managed_by_firebase_auth' || storedPassword !== password) {
+    return null;
+  }
+
+  if (userData.status === 'inactive') {
+    throw new Error('inactive-account');
+  }
+
+  return buildCurrentUserSession({
+    uid,
+    email: userData.username || userData.email || login,
+    userData,
+  });
+};
+
 const buildPermissionSeedUpdates = () => {
   const updates = {};
 
@@ -241,67 +314,59 @@ function Login() {
           return;
         }
 
-        let userType = userData.role_id;
-        let roleIds = Array.isArray(userData.role_ids) && userData.role_ids.length
-          ? userData.role_ids
-          : [userType || 'student'];
-        let profileId = user.uid;
-        let profileName = userData.username || user.email || 'User';
         const isBuiltInAdmin = email.trim().toLowerCase() === ADMIN_CREDENTIALS.email;
 
-        if (isBuiltInAdmin) {
-          userType = 'admin';
-          roleIds = ['admin'];
-          profileId = 'admin';
-          profileName = 'Admin';
-          if (userData.role_id !== 'admin') {
-            await seedAdminSchema(user);
-          }
+        if (isBuiltInAdmin && userData.role_id !== 'admin') {
+          await seedAdminSchema(user);
         }
 
-        if (!isBuiltInAdmin) {
-          const linkedProfile = await findLinkedProfile(user.uid, roleIds);
-          if (linkedProfile) {
-            profileId = linkedProfile.id;
-            profileName = linkedProfile.name || userData.username || user.email || 'User';
-            if (!roleIds.includes(userType)) {
-              userType = roleIds[0] || userType;
-            }
-          }
-        }
-
-        const permissions = await getUserEffectivePermissions(roleIds, user.uid);
-
-        localStorage.setItem('currentUser', JSON.stringify({
+        const sessionUser = await buildCurrentUserSession({
           uid: user.uid,
           email: user.email,
-          userType,
-          roleIds,
-          name: profileName,
-          id: profileId,
-          permissions
-        }));
+          userData,
+          isBuiltInAdmin,
+        });
+
+        localStorage.setItem('currentUser', JSON.stringify(sessionUser));
 
         navigate('/home');
       } else {
         if (isAdminLogin(email, password)) {
           await seedAdminSchema(user);
-          const permissions = await getUserEffectivePermissions(['admin'], user.uid);
-          localStorage.setItem('currentUser', JSON.stringify({
+          const sessionUser = await buildCurrentUserSession({
             uid: user.uid,
             email: user.email,
-            userType: 'admin',
-            roleIds: ['admin'],
-            name: 'Admin',
-            id: 'admin',
-            permissions
-          }));
+            userData: {
+              username: ADMIN_CREDENTIALS.email,
+              role_id: 'admin',
+              role_ids: ['admin'],
+            },
+            isBuiltInAdmin: true,
+          });
+          localStorage.setItem('currentUser', JSON.stringify(sessionUser));
           navigate('/home');
         } else {
           setError('User data not found. Please contact support.');
         }
       }
     } catch (err) {
+      if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential'].includes(err.code)) {
+        try {
+          const databaseSession = await authenticateWithDatabasePassword(email, password);
+          if (databaseSession) {
+            localStorage.setItem('currentUser', JSON.stringify(databaseSession));
+            navigate('/home');
+            return;
+          }
+        } catch (databaseAuthError) {
+          if (databaseAuthError.message === 'inactive-account') {
+            setError('Your account is deactivated. Please contact the administrator.');
+            return;
+          }
+          console.error('Database password login error:', databaseAuthError);
+        }
+      }
+
       console.error('Login error:', err);
 
       if (err.code === 'auth/user-not-found') {
