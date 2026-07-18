@@ -889,8 +889,6 @@ function FacultySchedules() {
       const rooms = roomsSnapshot.val() || {};
       const subjects = subjectsSnapshot.val() || {};
       setFacultyDirectory(faculties);
-      const facultyRecord = Object.values(faculties).find((faculty) => faculty.user_id === currentUser.uid);
-      const fallbackFacultyId = facultyRecord?.faculty_id || currentUser.facultyId || currentUser.uid;
       const existingSubjectByName = Object.values(subjects).reduce((acc, subject) => {
         acc[normalizeLookup(subject.subject_name)] = subject;
         acc[normalizeLookup(subject.subject_code)] = subject;
@@ -910,7 +908,7 @@ function FacultySchedules() {
         const matchedFaculty = schedule.facultyId
           ? Object.values(faculties).find((faculty) => faculty.faculty_id === schedule.facultyId)
           : findFacultyByName(schedule.instructor, faculties);
-        const assignedFacultyId = matchedFaculty?.faculty_id || schedule.facultyId || fallbackFacultyId;
+        const assignedFacultyId = matchedFaculty?.faculty_id || schedule.facultyId || '';
         const subjectName = schedule.subject || 'TBD';
         const subjectRecord = existingSubjectByName[normalizeLookup(subjectName)];
         const subjectId = subjectRecord?.subject_id || sanitizeId(`subj_${subjectName}`);
@@ -935,7 +933,7 @@ function FacultySchedules() {
 
         const scheduleId = sanitizeId([
           'sched',
-          assignedFacultyId,
+          assignedFacultyId || 'unassigned',
           subjectId,
           roomId || roomName,
           schedule.day,
@@ -949,6 +947,7 @@ function FacultySchedules() {
         updates[`schedules/${scheduleId}`] = {
           schedule_id: scheduleId,
           faculty_id: assignedFacultyId,
+          instructor_name: schedule.instructor || '',
           subject_id: subjectId,
           room_id: roomId,
           room_name: roomName,
@@ -1164,9 +1163,10 @@ function FacultySchedules() {
   const scheduleDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const facultyName = currentUser?.name || 'Faculty Member';
   const canManageSchedules = Boolean(currentUser?.permissions?.upload_schedules);
+  const isAdminUser = currentUser?.userType === 'admin' || currentUser?.roleIds?.includes('admin');
   const currentFacultyRecord = Object.values(facultyDirectory).find((faculty) => faculty.user_id === currentUser?.uid);
-  const currentFacultyId = currentFacultyRecord?.faculty_id || currentUser?.facultyId || currentUser?.uid;
-  const isOwnSchedule = (schedule) => schedule.facultyId === currentFacultyId;
+  const currentFacultyId = currentFacultyRecord?.faculty_id || currentUser?.facultyId || '';
+  const isOwnSchedule = (schedule) => !isAdminUser && currentFacultyId && schedule.facultyId === currentFacultyId;
   const personalSchedules = schedules.filter(isOwnSchedule);
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
   const todayCount = personalSchedules.filter((schedule) => schedule.day === todayName).length;
@@ -1583,11 +1583,11 @@ function FacultySchedules() {
                 <MdEventNote className="mx-auto h-12 w-12 text-slate-300 dark:text-gray-600" />
                 <h3 className="mt-4 text-lg font-semibold text-slate-950 dark:text-gray-100">No schedules available</h3>
                 <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-gray-400">
-                  {canManageSchedules
-                    ? 'Import an Excel schedule to populate this timetable. Required columns include course description, room, time, day, instructor, and section.'
+                  {isAdminUser
+                    ? 'No schedule is assigned to this admin account. Use View Schedules to review all imported records.'
                     : 'No schedule is currently assigned to your faculty account.'}
                 </p>
-                {canManageSchedules && (
+                {canManageSchedules && !isAdminUser && (
                   <button
                     onClick={handleImportClick}
                     className="mt-5 inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
