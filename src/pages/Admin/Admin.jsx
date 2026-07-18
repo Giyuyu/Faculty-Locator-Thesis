@@ -48,6 +48,8 @@ const ROLES = {
   student: { role_id: 'student', role_name: 'Student' },
 };
 
+const ALL_ROLE_IDS = Object.keys(ROLES);
+
 const PERMISSIONS = [
   { permission_id: 'manage_users', permission_name: 'Manage Users' },
   { permission_id: 'manage_rooms', permission_name: 'Manage Rooms' },
@@ -254,6 +256,12 @@ function ensureAdminPermissions(roleIds, permissions) {
   return roleIds.includes('admin')
     ? { ...permissions, ...adminPermissionMap() }
     : permissions;
+}
+
+function normalizeAssignedRoles(roleIds) {
+  const uniqueRoleIds = [...new Set(roleIds.filter((roleId) => ROLES[roleId]))];
+  if (uniqueRoleIds.includes('admin')) return ALL_ROLE_IDS;
+  return uniqueRoleIds.length ? uniqueRoleIds : ['student'];
 }
 
 function effectiveUserPermissions(rolePermissions, userPermissions, userId, roleIds) {
@@ -596,13 +604,13 @@ function Admin() {
     const rows = Object.entries(users)
       .map(([key, user]) => {
         const userId = user.user_id || key;
-        const roleIds = Array.isArray(user.role_ids) && user.role_ids.length ? user.role_ids : [user.role_id || 'student'];
+        const roleIds = normalizeAssignedRoles(Array.isArray(user.role_ids) && user.role_ids.length ? user.role_ids : [user.role_id || 'student']);
         return {
           ...user,
           user_key: key,
           user_id: userId,
           role_ids: roleIds,
-          role_id: user.role_id || roleIds[0],
+          role_id: roleIds.includes('admin') ? 'admin' : user.role_id || roleIds[0],
           display_name: getProfileName(user, students, faculties),
           permissions: effectiveUserPermissions(loadedRolePermissions, loadedUserPermissions, userId, roleIds),
         };
@@ -691,17 +699,22 @@ function Admin() {
     const target = managedUsers.find((user) => user.user_id === userId);
     if (!target) return;
 
-    const currentRoleIds = Array.isArray(target.role_ids) ? target.role_ids : [target.role_id];
-    const nextRoleIds = currentRoleIds.includes(roleId)
+    const currentRoleIds = normalizeAssignedRoles(Array.isArray(target.role_ids) ? target.role_ids : [target.role_id]);
+    const toggledRoleIds = currentRoleIds.includes(roleId)
       ? currentRoleIds.filter((id) => id !== roleId)
       : [...currentRoleIds, roleId];
+    const nextRoleIds = normalizeAssignedRoles(toggledRoleIds);
 
     if (!nextRoleIds.length) {
       setUserAdminMessage('A user must have at least one role.');
       return;
     }
 
-    const primaryRoleId = nextRoleIds.includes(target.role_id) ? target.role_id : nextRoleIds[0];
+    const primaryRoleId = nextRoleIds.includes('admin')
+      ? 'admin'
+      : nextRoleIds.includes(target.role_id)
+      ? target.role_id
+      : nextRoleIds[0];
     setManagedUsers((current) => current.map((user) =>
       user.user_id === userId ? {
         ...user,
@@ -771,6 +784,41 @@ function Admin() {
     }));
     setHasPermissionDraftChanges(true);
     setUserAdminMessage('User permission override staged. Click Save changes to apply.');
+  };
+
+  const handleResetUserPermission = (userId, permissionId) => {
+    const id = userPermissionId(userId, permissionId);
+    const nextUserPermissions = { ...userPermissions };
+    delete nextUserPermissions[id];
+    setUserPermissions(nextUserPermissions);
+
+    setManagedUsers((current) => current.map((user) => {
+      if (user.user_id !== userId) return user;
+      return {
+        ...user,
+        permissions: effectiveUserPermissions(rolePermissions, nextUserPermissions, userId, user.role_ids || [user.role_id]),
+      };
+    }));
+    setHasPermissionDraftChanges(true);
+    setUserAdminMessage('Permission reset to role default. Click Save changes to apply.');
+  };
+
+  const handleResetAllUserPermissions = (userId) => {
+    const nextUserPermissions = Object.entries(userPermissions).reduce((acc, [id, record]) => {
+      if (record.user_id !== userId) acc[id] = record;
+      return acc;
+    }, {});
+    setUserPermissions(nextUserPermissions);
+
+    setManagedUsers((current) => current.map((user) => {
+      if (user.user_id !== userId) return user;
+      return {
+        ...user,
+        permissions: effectiveUserPermissions(rolePermissions, nextUserPermissions, userId, user.role_ids || [user.role_id]),
+      };
+    }));
+    setHasPermissionDraftChanges(true);
+    setUserAdminMessage('All custom permissions reset to role defaults. Click Save changes to apply.');
   };
 
   const handleSaveRolePermissionChanges = async () => {
@@ -1303,8 +1351,21 @@ function Admin() {
                 </div>
 
                 <div>
-                  <h4 className="text-sm font-semibold text-slate-950">User Permissions</h4>
-                  <p className="mt-1 text-xs text-slate-500">These settings override the selected user's role defaults.</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-950">User Permissions</h4>
+                      <p className="mt-1 text-xs text-slate-500">These settings override the selected user's role defaults.</p>
+                    </div>
+                    {Object.values(userPermissions).some((permission) => permission.user_id === selectedUser.user_id) && (
+                      <button
+                        type="button"
+                        onClick={() => handleResetAllUserPermissions(selectedUser.user_id)}
+                        className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Reset all to defaults
+                      </button>
+                    )}
+                  </div>
                   <div className="mt-3 grid gap-2 lg:grid-cols-2">
                     {PERMISSIONS.map((permission) => {
                       const overrideId = userPermissionId(selectedUser.user_id, permission.permission_id);
@@ -1325,6 +1386,15 @@ function Admin() {
                             <span className="text-[11px] font-medium text-slate-400">
                               {hasOverride ? 'Custom override' : 'Role default'}
                             </span>
+                            {hasOverride && (
+                              <button
+                                type="button"
+                                onClick={() => handleResetUserPermission(selectedUser.user_id, permission.permission_id)}
+                                className="text-[11px] font-semibold text-blue-700 hover:text-blue-900"
+                              >
+                                Reset to default
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
