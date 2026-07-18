@@ -40,7 +40,8 @@ function Student() {
     }
 
     const parsedUser = JSON.parse(user);
-    if (!parsedUser.permissions?.access_student_module) {
+    const isAdmin = parsedUser.userType === 'admin' || parsedUser.roleIds?.includes('admin');
+    if (!isAdmin && !parsedUser.permissions?.access_student_module) {
       navigate('/home');
       return;
     }

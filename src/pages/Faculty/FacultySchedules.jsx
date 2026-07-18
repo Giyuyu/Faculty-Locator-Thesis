@@ -113,6 +113,8 @@ function FacultySchedules() {
     if (!currentUser) {
       navigate('/login');
     } else if (
+      currentUser.userType !== 'admin' &&
+      !currentUser.roleIds?.includes('admin') &&
       !currentUser.permissions?.view_schedules &&
       !currentUser.permissions?.upload_schedules &&
       !currentUser.permissions?.access_faculty_module

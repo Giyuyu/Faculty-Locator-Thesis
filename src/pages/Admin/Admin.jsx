@@ -231,6 +231,27 @@ function applyUserPermissionOverrides(basePermissions, userPermissions, userId) 
   }, { ...basePermissions });
 }
 
+function adminPermissionMap() {
+  return PERMISSIONS.reduce((acc, permission) => {
+    acc[permission.permission_id] = true;
+    return acc;
+  }, {});
+}
+
+function ensureAdminPermissions(roleIds, permissions) {
+  return roleIds.includes('admin')
+    ? { ...permissions, ...adminPermissionMap() }
+    : permissions;
+}
+
+function effectiveUserPermissions(rolePermissions, userPermissions, userId, roleIds) {
+  const basePermissions = permissionMapFromRoles(rolePermissions, roleIds);
+  return ensureAdminPermissions(
+    roleIds,
+    applyUserPermissionOverrides(basePermissions, userPermissions, userId)
+  );
+}
+
 function mapBatchRow(row) {
   const normalized = Object.entries(row).reduce((acc, [key, value]) => {
     acc[normalizeKey(key)] = value;
@@ -567,11 +588,7 @@ function Admin() {
           role_ids: roleIds,
           role_id: user.role_id || roleIds[0],
           display_name: getProfileName(user, students, faculties),
-          permissions: applyUserPermissionOverrides(
-            permissionMapFromRoles(loadedRolePermissions, roleIds),
-            loadedUserPermissions,
-            user.user_id
-          ),
+          permissions: effectiveUserPermissions(loadedRolePermissions, loadedUserPermissions, user.user_id, roleIds),
         };
       })
       .sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
@@ -674,11 +691,7 @@ function Admin() {
         ...user,
         role_id: primaryRoleId,
         role_ids: nextRoleIds,
-        permissions: applyUserPermissionOverrides(
-          permissionMapFromRoles(rolePermissions, nextRoleIds),
-          userPermissions,
-          userId
-        ),
+        permissions: effectiveUserPermissions(rolePermissions, userPermissions, userId, nextRoleIds),
       } : user
     ));
     setHasPermissionDraftChanges(true);
@@ -703,10 +716,11 @@ function Admin() {
     setRolePermissions(nextRolePermissions);
     setManagedUsers((current) => current.map((user) => ({
       ...user,
-      permissions: applyUserPermissionOverrides(
-        permissionMapFromRoles(nextRolePermissions, user.role_ids || [user.role_id]),
+      permissions: effectiveUserPermissions(
+        nextRolePermissions,
         userPermissions,
-        user.user_id
+        user.user_id,
+        user.role_ids || [user.role_id]
       ),
     })));
     setHasPermissionDraftChanges(true);
@@ -734,33 +748,13 @@ function Admin() {
 
     setManagedUsers((current) => current.map((user) => {
       if (user.user_id !== userId) return user;
-      const rolePermissionMap = permissionMapFromRoles(rolePermissions, user.role_ids || [user.role_id]);
       return {
         ...user,
-        permissions: applyUserPermissionOverrides(rolePermissionMap, nextUserPermissions, userId),
+        permissions: effectiveUserPermissions(rolePermissions, nextUserPermissions, userId, user.role_ids || [user.role_id]),
       };
     }));
     setHasPermissionDraftChanges(true);
     setUserAdminMessage('User permission override staged. Click Save changes to apply.');
-  };
-
-  const handleResetUserPermission = (userId, permissionId) => {
-    const id = userPermissionId(userId, permissionId);
-
-    const nextUserPermissions = { ...userPermissions };
-    delete nextUserPermissions[id];
-    setUserPermissions(nextUserPermissions);
-
-    setManagedUsers((current) => current.map((user) => {
-      if (user.user_id !== userId) return user;
-      const rolePermissionMap = permissionMapFromRoles(rolePermissions, user.role_ids || [user.role_id]);
-      return {
-        ...user,
-        permissions: applyUserPermissionOverrides(rolePermissionMap, nextUserPermissions, userId),
-      };
-    }));
-    setHasPermissionDraftChanges(true);
-    setUserAdminMessage('User permission reset staged. Click Save changes to apply.');
   };
 
   const handleSaveRolePermissionChanges = async () => {
@@ -804,6 +798,21 @@ function Admin() {
     }
 
     await update(ref(database), updates);
+
+    const updatedCurrentUser = managedUsers.find((user) => user.user_id === currentUser?.uid);
+    if (updatedCurrentUser) {
+      const nextCurrentUser = {
+        ...currentUser,
+        userType: updatedCurrentUser.role_id,
+        roleIds: updatedCurrentUser.role_ids || [updatedCurrentUser.role_id],
+        permissions: updatedCurrentUser.permissions,
+        name: updatedCurrentUser.display_name || currentUser.name,
+        username: updatedCurrentUser.username || currentUser.username,
+      };
+      setCurrentUser(nextCurrentUser);
+      localStorage.setItem('currentUser', JSON.stringify(nextCurrentUser));
+    }
+
     setSavedRolePermissions(rolePermissions);
     setSavedUserPermissions(userPermissions);
     setSavedUserRoles(managedUsers.reduce((acc, user) => {
@@ -1268,15 +1277,6 @@ function Admin() {
                             <span className="text-[11px] font-medium text-slate-400">
                               {hasOverride ? 'Custom override' : 'Role default'}
                             </span>
-                            {hasOverride && (
-                              <button
-                                type="button"
-                                onClick={() => handleResetUserPermission(selectedUser.user_id, permission.permission_id)}
-                                className="text-[11px] font-semibold text-blue-700 hover:text-blue-900"
-                              >
-                                Reset
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -1626,7 +1626,7 @@ function Admin() {
                   aria-haspopup="menu"
                 >
                   <FaUserCircle className="h-9 w-9 text-slate-300" />
-                  <span className="hidden text-sm font-semibold text-slate-800 md:inline">Admin</span>
+                  <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 md:inline">{currentUser?.name || currentUser?.username || 'User'}</span>
                   <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
                 </button>
 

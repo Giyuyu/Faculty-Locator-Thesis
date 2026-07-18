@@ -36,7 +36,8 @@ function Faculty() {
     const user = localStorage.getItem('currentUser');
     if (user) {
       const parsedUser = JSON.parse(user);
-      if (!parsedUser.permissions?.access_faculty_module) {
+      const isAdmin = parsedUser.userType === 'admin' || parsedUser.roleIds?.includes('admin');
+      if (!isAdmin && !parsedUser.permissions?.access_faculty_module) {
         navigate('/home');
         return;
       }

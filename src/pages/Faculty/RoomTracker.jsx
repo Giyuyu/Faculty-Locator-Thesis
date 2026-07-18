@@ -82,7 +82,12 @@ function RoomTracker() {
   useEffect(() => {
     if (!currentUser) {
       navigate('/login');
-    } else if (!currentUser.permissions?.access_faculty_module && !currentUser.permissions?.manage_rooms) {
+    } else if (
+      currentUser.userType !== 'admin' &&
+      !currentUser.roleIds?.includes('admin') &&
+      !currentUser.permissions?.access_faculty_module &&
+      !currentUser.permissions?.manage_rooms
+    ) {
       navigate('/home');
     }
   }, [currentUser, navigate]);

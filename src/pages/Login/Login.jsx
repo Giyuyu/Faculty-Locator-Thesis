@@ -57,6 +57,44 @@ const applyUserPermissionOverrides = (basePermissions, userPermissions, userId) 
     return acc;
   }, { ...basePermissions });
 
+const adminPermissionMap = () => PERMISSIONS.reduce((acc, permission) => {
+  acc[permission.permission_id] = true;
+  return acc;
+}, {});
+
+const ensureAdminPermissions = (roleIds, permissions) => (
+  roleIds.includes('admin')
+    ? { ...permissions, ...adminPermissionMap() }
+    : permissions
+);
+
+const findLinkedProfile = async (userId, roleIds) => {
+  const profilePaths = roleIds.includes('faculty') || roleIds.includes('admin')
+    ? ['faculties', 'students']
+    : ['students', 'faculties'];
+
+  for (const profilePath of profilePaths) {
+    const profileSnapshot = await get(ref(database, profilePath));
+    if (!profileSnapshot.exists()) continue;
+
+    const profiles = profileSnapshot.val();
+    const profileEntry = Object.entries(profiles).find(([, profile]) => profile.user_id === userId);
+    if (profileEntry) {
+      const [id, profile] = profileEntry;
+      return {
+        id,
+        name: [
+          profile.first_name,
+          profile.middle_name,
+          profile.last_name
+        ].filter(Boolean).join(' ')
+      };
+    }
+  }
+
+  return null;
+};
+
 const buildPermissionSeedUpdates = () => {
   const updates = {};
 
@@ -123,7 +161,8 @@ const getUserEffectivePermissions = async (roleIds, userId) => {
     return acc;
   }, {});
 
-  return applyUserPermissionOverrides(basePermissions, userPermissions, userId);
+  const effectivePermissions = applyUserPermissionOverrides(basePermissions, userPermissions, userId);
+  return ensureAdminPermissions(roleIds, effectivePermissions);
 };
 
 const seedAdminSchema = async (user) => {
@@ -208,8 +247,9 @@ function Login() {
           : [userType || 'student'];
         let profileId = user.uid;
         let profileName = userData.username || user.email || 'User';
+        const isBuiltInAdmin = email.trim().toLowerCase() === ADMIN_CREDENTIALS.email;
 
-        if (email.trim().toLowerCase() === ADMIN_CREDENTIALS.email) {
+        if (isBuiltInAdmin) {
           userType = 'admin';
           roleIds = ['admin'];
           profileId = 'admin';
@@ -219,22 +259,13 @@ function Login() {
           }
         }
 
-        if (userType === 'student' || userType === 'faculty') {
-          const profilePath = userType === 'student' ? 'students' : 'faculties';
-          const profileSnapshot = await get(ref(database, profilePath));
-
-          if (profileSnapshot.exists()) {
-            const profiles = profileSnapshot.val();
-            const profileEntry = Object.entries(profiles).find(([, profile]) => profile.user_id === user.uid);
-
-            if (profileEntry) {
-              const [id, profile] = profileEntry;
-              profileId = id;
-              profileName = [
-                profile.first_name,
-                profile.middle_name,
-                profile.last_name
-              ].filter(Boolean).join(' ') || userData.username;
+        if (!isBuiltInAdmin) {
+          const linkedProfile = await findLinkedProfile(user.uid, roleIds);
+          if (linkedProfile) {
+            profileId = linkedProfile.id;
+            profileName = linkedProfile.name || userData.username || user.email || 'User';
+            if (!roleIds.includes(userType)) {
+              userType = roleIds[0] || userType;
             }
           }
         }
