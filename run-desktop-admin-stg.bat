@@ -12,5 +12,5 @@ if not exist ".venv\Scripts\python.exe" (
   )
 )
 
-set STI_LOCATOR_ENV=production
-call ".venv\Scripts\python.exe" desktop_app\login.py
+set STI_LOCATOR_ENV=staging
+call ".venv\Scripts\python.exe" desktop_app\admin.py

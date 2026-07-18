@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 const Landing = lazy(() => import('./pages/Landing/Landing'));
 const Home = lazy(() => import('./pages/Home/Home'));
 const Login = lazy(() => import('./pages/Login/Login'));
+const Profile = lazy(() => import('./pages/Profile/Profile'));
 const Student = lazy(() => import('./pages/Student/Student'));
 const Faculty = lazy(() => import('./pages/Faculty/Faculty'));
 const FacultySchedules = lazy(() => import('./pages/Faculty/FacultySchedules'));
@@ -20,6 +21,7 @@ function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/home" element={<Home />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/profile" element={<Profile />} />
             <Route path="/signup" element={<Navigate to="/login" replace />} />
             <Route path="/student" element={<Student />} />
             <Route path="/faculty" element={<Faculty />} />

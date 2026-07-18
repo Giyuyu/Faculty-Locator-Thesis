@@ -2,19 +2,27 @@ import Swal from 'sweetalert2';
 import { getAuth, signOut, updatePassword } from 'firebase/auth';
 import { ref, update } from 'firebase/database';
 
-export const showUserProfile = (currentUser) => {
-  Swal.fire({
-    title: 'My profile',
-    html: `
-      <div style="text-align:left;line-height:1.7">
-        <strong>Name:</strong> ${currentUser?.name || currentUser?.username || 'User'}<br/>
-        <strong>Username:</strong> ${currentUser?.username || 'Not available'}<br/>
-        <strong>User ID:</strong> ${currentUser?.uid || currentUser?.id || 'Not available'}<br/>
-        <strong>Role:</strong> ${(currentUser?.roleIds || [currentUser?.userType]).filter(Boolean).join(', ') || 'Not available'}
-      </div>
-    `,
-    confirmButtonText: 'Close',
-  });
+const applyTheme = (theme) => {
+  const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
+  localStorage.setItem('theme', resolvedTheme);
+  document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
+  document.documentElement.dataset.theme = resolvedTheme;
+  window.dispatchEvent(new CustomEvent('themechange', { detail: resolvedTheme }));
+  return resolvedTheme;
+};
+
+export const applySavedTheme = () => applyTheme(localStorage.getItem('theme') || 'light');
+
+export const openUserProfile = (navigate) => navigate('/profile');
+
+export const openThemeSettings = (navigate) => navigate('/profile?section=theme');
+
+export const showUserProfile = (_currentUser, navigate) => {
+  if (navigate) {
+    openUserProfile(navigate);
+    return;
+  }
+  window.location.assign('/profile');
 };
 
 export const changeCurrentUserPassword = async (database, currentUser) => {
@@ -72,9 +80,12 @@ export const changeCurrentUserPassword = async (database, currentUser) => {
 
 export const toggleThemeSetting = () => {
   const nextTheme = localStorage.getItem('theme') === 'dark' ? 'light' : 'dark';
-  localStorage.setItem('theme', nextTheme);
-  document.documentElement.classList.toggle('dark', nextTheme === 'dark');
-  Swal.fire('Theme settings', `${nextTheme === 'dark' ? 'Dark' : 'Light'} mode enabled.`, 'success');
+  applyTheme(nextTheme);
+  return nextTheme;
+};
+
+export const setThemeSetting = (theme) => {
+  applyTheme(theme);
 };
 
 export const signOutCurrentUser = async (navigate) => {

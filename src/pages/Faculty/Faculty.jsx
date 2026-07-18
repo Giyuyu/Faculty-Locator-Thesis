@@ -9,9 +9,9 @@ import logo from '../../assets/sti_logo.png';
 import { buildTrackerData } from '../../utils/trackerData';
 import {
   changeCurrentUserPassword,
-  showUserProfile,
+  openThemeSettings,
+  openUserProfile,
   signOutCurrentUser,
-  toggleThemeSetting,
 } from '../../utils/profileActions';
 
 function Faculty() {
@@ -179,10 +179,10 @@ function Faculty() {
 
                 {profileOpen && (
                   <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                    <button type="button" onClick={() => showUserProfile(currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
+                    <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
                     <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Change password</button>
                     <div className="my-2 border-t border-slate-200" />
-                    <button type="button" onClick={toggleThemeSetting} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
+                    <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
                     <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Sign out</button>
                   </div>
                 )}

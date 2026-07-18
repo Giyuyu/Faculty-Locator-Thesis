@@ -1,17 +1,60 @@
 import pyrebase
 import os
+from pathlib import Path
 
-# Firebase configuration
-FIREBASE_CONFIG = {
-    "apiKey": "AIzaSyA1pD-tdznT18bYas0-lg6gFS1gAt7ZRHo",
-    "authDomain": "fac-loc.firebaseapp.com",
-    "databaseURL": "https://fac-loc-default-rtdb.firebaseio.com/",
-    "projectId": "fac-loc",
-    "storageBucket": "fac-loc.firebasestorage.app",
-    "messagingSenderId": "1004073148218",
-    "appId": "1:1004073148218:web:bb702183860b0fb4083a03",
-    "measurementId": "G-TTWB6F24PQ"
+APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parent
+ENVIRONMENT = os.getenv("STI_LOCATOR_ENV", "production").strip().lower()
+ENV_FILE_BY_MODE = {
+    "prod": ".env.production",
+    "production": ".env.production",
+    "stg": ".env.staging",
+    "stage": ".env.staging",
+    "staging": ".env.staging",
 }
+
+
+def get_current_environment():
+    return "staging" if ENVIRONMENT in ("stg", "stage", "staging") else "production"
+
+
+def _read_env_file(path):
+    values = {}
+    if not path.exists():
+        return values
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+
+    return values
+
+
+def _env_value(values, key):
+    return os.getenv(key) or values.get(key, "")
+
+
+def load_firebase_config():
+    env_file_name = ENV_FILE_BY_MODE.get(ENVIRONMENT, ".env.production")
+    values = _read_env_file(PROJECT_ROOT / env_file_name)
+
+    return {
+        "apiKey": _env_value(values, "VITE_FIREBASE_API_KEY"),
+        "authDomain": _env_value(values, "VITE_FIREBASE_AUTH_DOMAIN"),
+        "databaseURL": _env_value(values, "VITE_FIREBASE_DATABASE_URL"),
+        "projectId": _env_value(values, "VITE_FIREBASE_PROJECT_ID"),
+        "storageBucket": _env_value(values, "VITE_FIREBASE_STORAGE_BUCKET"),
+        "messagingSenderId": _env_value(values, "VITE_FIREBASE_MESSAGING_SENDER_ID"),
+        "appId": _env_value(values, "VITE_FIREBASE_APP_ID"),
+        "measurementId": _env_value(values, "VITE_FIREBASE_MEASUREMENT_ID"),
+    }
+
+
+FIREBASE_CONFIG = load_firebase_config()
 
 # Global Firebase app instance
 _firebase_app = None
@@ -25,6 +68,9 @@ def initialize_firebase():
     global _firebase_app
     if _firebase_app is None:
         try:
+            if not FIREBASE_CONFIG.get("apiKey") or not FIREBASE_CONFIG.get("databaseURL"):
+                print(f"Firebase configuration is missing for {get_current_environment()} environment.")
+                return False
             _firebase_app = pyrebase.initialize_app(FIREBASE_CONFIG)
             return True
         except Exception as e:

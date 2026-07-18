@@ -15,10 +15,10 @@ import {
   FaCog,
   FaDoorOpen,
   FaEdit,
-  FaExclamationTriangle,
   FaFileUpload,
   FaLayerGroup,
   FaCopy,
+  FaDownload,
   FaKey,
   FaSave,
   FaSearch,
@@ -37,9 +37,9 @@ import NotificationBell from '../../components/NotificationBell';
 import logo from '../../assets/sti_logo.png';
 import {
   changeCurrentUserPassword,
-  showUserProfile,
+  openThemeSettings,
+  openUserProfile,
   signOutCurrentUser,
-  toggleThemeSetting,
 } from '../../utils/profileActions';
 
 const ROLES = {
@@ -133,6 +133,49 @@ const batchColumns = [
   'password',
 ];
 
+function normalizeHeaderCell(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function getBatchRowsFromSheet(sheet) {
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
+  const requiredHeaders = ['role', 'first_name', 'last_name', 'email'];
+  const headerRowIndex = rawRows.findIndex((row) => {
+    const headers = row.map(normalizeHeaderCell);
+    return requiredHeaders.every((header) => headers.includes(header));
+  });
+
+  if (headerRowIndex < 0) {
+    throw new Error('Template headers were not found. Please use the STI Locator batch account template.');
+  }
+
+  const headers = rawRows[headerRowIndex].map(normalizeHeaderCell);
+  const cell = (row, key) => {
+    const index = headers.indexOf(key);
+    return index >= 0 ? row[index] : '';
+  };
+
+  return rawRows
+    .slice(headerRowIndex + 1)
+    .map((row, index) => ({
+      role: String(cell(row, 'role') || '').trim().toLowerCase(),
+      studentNumber: String(cell(row, 'student_number') || cell(row, 'student_id') || '').trim(),
+      facultyId: String(cell(row, 'faculty_id') || '').trim(),
+      firstName: String(cell(row, 'first_name') || '').trim(),
+      middleName: String(cell(row, 'middle_name') || '').trim(),
+      lastName: String(cell(row, 'last_name') || '').trim(),
+      department: String(cell(row, 'department') || '').trim(),
+      email: String(cell(row, 'email') || '').trim(),
+      password: String(cell(row, 'password') || '').trim(),
+      __rowNumber: headerRowIndex + index + 2,
+    }))
+    .filter(hasBatchRowContent);
+}
+
 function StatusBadge({ status }) {
   return (
     <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold capitalize ring-1 ${statusClasses[status] || statusClasses.inactive}`}>
@@ -167,10 +210,6 @@ function Field({ label, children }) {
 
 function fieldClass() {
   return 'w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
-}
-
-function normalizeKey(key) {
-  return String(key).trim().toLowerCase().replace(/\s+/g, '_');
 }
 
 function sanitizeId(value) {
@@ -272,25 +311,6 @@ function effectiveUserPermissions(rolePermissions, userPermissions, userId, role
   );
 }
 
-function mapBatchRow(row) {
-  const normalized = Object.entries(row).reduce((acc, [key, value]) => {
-    acc[normalizeKey(key)] = value;
-    return acc;
-  }, {});
-
-  return {
-    role: String(normalized.role || normalized.user_type || 'student').trim().toLowerCase(),
-    studentNumber: String(normalized.student_number || normalized.student_id || '').trim(),
-    facultyId: String(normalized.faculty_id || '').trim(),
-    firstName: String(normalized.first_name || '').trim(),
-    middleName: String(normalized.middle_name || '').trim(),
-    lastName: String(normalized.last_name || '').trim(),
-    department: String(normalized.department || '').trim(),
-    email: String(normalized.email || '').trim(),
-    password: String(normalized.password || 'Temp@12345').trim(),
-  };
-}
-
 async function createProvisionedAuthUser(email, password) {
   const secondaryApp = initializeApp(firebaseConfig, `admin-provision-${Date.now()}-${Math.random()}`);
   const secondaryAuth = getAuth(secondaryApp);
@@ -364,6 +384,188 @@ function validateUserForm(form) {
   return '';
 }
 
+function normalizeUniqueValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function buildAccountDuplicateIndex(data = {}) {
+  const index = {
+    emails: new Set(),
+    usernames: new Set(),
+    studentNumbers: new Set(),
+    facultyIds: new Set(),
+  };
+
+  Object.values(data.users || {}).forEach((user) => {
+    const username = normalizeUniqueValue(user?.username);
+    const email = normalizeUniqueValue(user?.email);
+    if (username) {
+      index.usernames.add(username);
+      index.emails.add(username);
+    }
+    if (email) {
+      index.emails.add(email);
+      index.usernames.add(email);
+    }
+  });
+
+  Object.values(data.students || {}).forEach((student) => {
+    const studentNumber = normalizeUniqueValue(student?.student_number || student?.student_id);
+    if (studentNumber) index.studentNumbers.add(studentNumber);
+  });
+
+  Object.values(data.faculties || {}).forEach((faculty) => {
+    const facultyId = normalizeUniqueValue(faculty?.faculty_id);
+    const email = normalizeUniqueValue(faculty?.email);
+    if (facultyId) index.facultyIds.add(facultyId);
+    if (email) index.emails.add(email);
+  });
+
+  return index;
+}
+
+function addAccountToDuplicateIndex(index, form) {
+  const email = normalizeUniqueValue(form.email);
+  if (email) {
+    index.emails.add(email);
+    index.usernames.add(email);
+  }
+
+  if (form.role === 'student') {
+    const studentNumber = normalizeUniqueValue(form.studentNumber);
+    if (studentNumber) index.studentNumbers.add(studentNumber);
+  }
+
+  if (form.role === 'faculty') {
+    const facultyId = normalizeUniqueValue(form.facultyId);
+    if (facultyId) index.facultyIds.add(facultyId);
+  }
+}
+
+function validateUniqueUserForm(form, duplicateIndex) {
+  const email = normalizeUniqueValue(form.email);
+  if (email && (duplicateIndex.emails.has(email) || duplicateIndex.usernames.has(email))) {
+    return `Email already exists: ${form.email}`;
+  }
+
+  if (form.role === 'student') {
+    const studentNumber = normalizeUniqueValue(form.studentNumber);
+    if (studentNumber && duplicateIndex.studentNumbers.has(studentNumber)) {
+      return `Student number already exists: ${form.studentNumber}`;
+    }
+  }
+
+  if (form.role === 'faculty') {
+    const facultyId = normalizeUniqueValue(form.facultyId);
+    if (facultyId && duplicateIndex.facultyIds.has(facultyId)) {
+      return `Faculty ID already exists: ${form.facultyId}`;
+    }
+  }
+
+  return '';
+}
+
+function hasBatchRowContent(row) {
+  return [
+    row.role,
+    row.studentNumber,
+    row.facultyId,
+    row.firstName,
+    row.middleName,
+    row.lastName,
+    row.department,
+    row.email,
+    row.password,
+  ].some((value) => String(value || '').trim());
+}
+
+function buildBatchImportPlan(rows, duplicateIndex) {
+  const seen = {
+    emails: new Map(),
+    studentNumbers: new Map(),
+    facultyIds: new Map(),
+  };
+  const acceptedRows = [];
+  const skippedRows = [];
+
+  rows.forEach((row, index) => {
+    const rowNumber = row.__rowNumber || index + 2;
+    const issues = [];
+    const validationError = validateUserForm(row);
+    const email = normalizeUniqueValue(row.email);
+    const studentNumber = normalizeUniqueValue(row.studentNumber);
+    const facultyId = normalizeUniqueValue(row.facultyId);
+
+    if (validationError) issues.push(validationError);
+
+    if (email) {
+      if (duplicateIndex.emails.has(email) || duplicateIndex.usernames.has(email)) {
+        issues.push(`email already exists (${row.email})`);
+      }
+      if (seen.emails.has(email)) {
+        issues.push(`duplicate email with row ${seen.emails.get(email)} (${row.email})`);
+      }
+    }
+
+    if (row.role === 'student' && studentNumber) {
+      if (duplicateIndex.studentNumbers.has(studentNumber)) {
+        issues.push(`student number already exists (${row.studentNumber})`);
+      }
+      if (seen.studentNumbers.has(studentNumber)) {
+        issues.push(`duplicate student number with row ${seen.studentNumbers.get(studentNumber)} (${row.studentNumber})`);
+      }
+    }
+
+    if (row.role === 'faculty' && facultyId) {
+      if (duplicateIndex.facultyIds.has(facultyId)) {
+        issues.push(`faculty ID already exists (${row.facultyId})`);
+      }
+      if (seen.facultyIds.has(facultyId)) {
+        issues.push(`duplicate faculty ID with row ${seen.facultyIds.get(facultyId)} (${row.facultyId})`);
+      }
+    }
+
+    if (issues.length) {
+      skippedRows.push({
+        rowNumber,
+        row,
+        issues,
+      });
+      return;
+    }
+
+    acceptedRows.push(row);
+    if (email) seen.emails.set(email, rowNumber);
+    if (row.role === 'student' && studentNumber) seen.studentNumbers.set(studentNumber, rowNumber);
+    if (row.role === 'faculty' && facultyId) seen.facultyIds.set(facultyId, rowNumber);
+  });
+
+  return {
+    acceptedRows,
+    skippedRows,
+  };
+}
+
+function formatBatchSkippedSummary(skippedRows) {
+  if (!skippedRows.length) return '';
+  const summaries = skippedRows.slice(0, 3).map((item) => `Row ${item.rowNumber}: ${item.issues.join(', ')}`);
+  return `${summaries.join(' | ')}${skippedRows.length > 3 ? ` | +${skippedRows.length - 3} more` : ''}`;
+}
+
+async function fetchAccountDuplicateIndex() {
+  const [usersSnapshot, studentsSnapshot, facultiesSnapshot] = await Promise.all([
+    get(ref(database, 'users')),
+    get(ref(database, 'students')),
+    get(ref(database, 'faculties')),
+  ]);
+
+  return buildAccountDuplicateIndex({
+    users: usersSnapshot.exists() ? usersSnapshot.val() : {},
+    students: studentsSnapshot.exists() ? studentsSnapshot.val() : {},
+    faculties: facultiesSnapshot.exists() ? facultiesSnapshot.val() : {},
+  });
+}
+
 function getProfileName(user, students, faculties) {
   const profileSource = user.role_id === 'student' ? students : faculties;
   const profile = Object.values(profileSource).find((item) => item.user_id === user.user_id);
@@ -388,6 +590,8 @@ function Admin() {
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [batchRows, setBatchRows] = useState([]);
   const [batchResult, setBatchResult] = useState('');
+  const [batchImportPlan, setBatchImportPlan] = useState(null);
+  const [batchSuccessModal, setBatchSuccessModal] = useState(null);
   const [isUploadingBatch, setIsUploadingBatch] = useState(false);
   const [managedUsers, setManagedUsers] = useState([]);
   const [rolePermissions, setRolePermissions] = useState({});
@@ -637,12 +841,17 @@ function Admin() {
     setSidebarOpen(open);
   };
 
-  const createInternalUser = async (form) => {
+  const createInternalUser = async (form, duplicateIndex = null) => {
     const validationError = validateUserForm(form);
     if (validationError) throw new Error(validationError);
 
+    const index = duplicateIndex || await fetchAccountDuplicateIndex();
+    const duplicateError = validateUniqueUserForm(form, index);
+    if (duplicateError) throw new Error(duplicateError);
+
     const user = await createProvisionedAuthUser(form.email.trim(), form.password);
     await update(ref(database), buildUserUpdates(user, form));
+    addAccountToDuplicateIndex(index, form);
     return user;
   };
 
@@ -668,31 +877,93 @@ function Admin() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const data = await file.arrayBuffer();
-    const workbook = XLSX.read(data);
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map(mapBatchRow);
-    setBatchRows(rows);
-    setBatchResult(`${rows.length} row${rows.length === 1 ? '' : 's'} ready for review.`);
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = getBatchRowsFromSheet(sheet);
+      setBatchRows(rows);
+      setBatchImportPlan(null);
+      setBatchSuccessModal(null);
+      setBatchResult(`${rows.length} row${rows.length === 1 ? '' : 's'} ready for review.`);
+    } catch (error) {
+      setBatchRows([]);
+      setBatchImportPlan(null);
+      setBatchSuccessModal(null);
+      setBatchResult(error.message || 'Unable to read the uploaded file.');
+    }
+  };
+
+  const handleDownloadBatchTemplate = () => {
+    const link = document.createElement('a');
+    link.href = '/templates/sti-locator-batch-account-template.xlsx';
+    link.download = 'sti-locator-batch-account-template.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const handleBatchCreate = async () => {
     setIsUploadingBatch(true);
+    setBatchResult('');
+    setBatchSuccessModal(null);
+
+    try {
+      const duplicateIndex = await fetchAccountDuplicateIndex();
+      const plan = buildBatchImportPlan(batchRows, duplicateIndex);
+      setBatchImportPlan(plan);
+      setBatchResult(
+        `Validation complete. ${plan.acceptedRows.length} row${plan.acceptedRows.length === 1 ? '' : 's'} can be imported.${plan.skippedRows.length ? ` ${plan.skippedRows.length} duplicate/invalid row${plan.skippedRows.length === 1 ? '' : 's'} will be skipped.` : ''}`
+      );
+    } catch (error) {
+      setBatchResult(error.message || 'Unable to validate uploaded accounts.');
+    } finally {
+      setIsUploadingBatch(false);
+    }
+  };
+
+  const handleConfirmBatchImport = async () => {
+    if (!batchImportPlan?.acceptedRows?.length) return;
+
+    setIsUploadingBatch(true);
     let created = 0;
     const failed = [];
 
-    for (const [index, row] of batchRows.entries()) {
-      try {
-        await createInternalUser(row);
-        created += 1;
-      } catch (error) {
-        failed.push(`Row ${index + 2}: ${error.message}`);
-      }
-    }
+    try {
+      const duplicateIndex = await fetchAccountDuplicateIndex();
 
-    setBatchResult(`Created ${created} account${created === 1 ? '' : 's'}.${failed.length ? ` Failed ${failed.length}: ${failed.slice(0, 3).join(' | ')}` : ''}`);
-    await loadManagedUsers();
-    setIsUploadingBatch(false);
+      for (const row of batchImportPlan.acceptedRows) {
+        try {
+          await createInternalUser(row, duplicateIndex);
+          created += 1;
+        } catch (error) {
+          failed.push(`Row ${row.__rowNumber || '?'}: ${error.message}`);
+        }
+      }
+
+      const skippedSummary = formatBatchSkippedSummary(batchImportPlan.skippedRows);
+      setBatchResult(`Import finished. Created ${created} account${created === 1 ? '' : 's'}.`);
+      setBatchSuccessModal({
+        created,
+        skippedRows: batchImportPlan.skippedRows,
+        skippedSummary,
+        failed,
+      });
+      setBatchImportPlan(null);
+      await loadManagedUsers();
+    } catch (error) {
+      setBatchResult(error.message || 'Unable to import batch accounts.');
+    } finally {
+      setIsUploadingBatch(false);
+    }
+  };
+
+  const handleCancelBatchImport = () => {
+    setBatchImportPlan(null);
+  };
+
+  const handleCloseBatchSuccess = () => {
+    setBatchSuccessModal(null);
   };
 
   const handleUserRoleToggle = (userId, roleId) => {
@@ -1425,6 +1696,14 @@ function Admin() {
             <FaFileUpload className="h-8 w-8 text-blue-600" />
             <h3 className="mt-4 text-sm font-semibold text-slate-950">Upload account list</h3>
             <p className="mt-2 text-sm text-slate-500">Required columns: {batchColumns.join(', ')}.</p>
+            <button
+              type="button"
+              onClick={handleDownloadBatchTemplate}
+              className="mt-5 inline-flex items-center gap-2 rounded-md border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50"
+            >
+              <FaDownload className="h-3.5 w-3.5" />
+              Download Template
+            </button>
             <input className="mt-5 block w-full text-sm text-slate-600 file:mr-4 file:rounded-md file:border-0 file:bg-blue-600 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" type="file" accept=".xlsx,.xls,.csv" onChange={handleBatchFile} />
             {batchResult && <p className="mt-4 rounded-md bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700">{batchResult}</p>}
             <button type="button" disabled={!batchRows.length || isUploadingBatch} onClick={handleBatchCreate} className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">
@@ -1719,6 +1998,128 @@ function Admin() {
           </button>
         </div>
       )}
+      {batchImportPlan && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
+              <div>
+                <p className="text-base font-semibold text-slate-950">Review batch import</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Valid rows will be created. Duplicate or invalid rows will be discarded.
+                </p>
+              </div>
+              <button type="button" onClick={handleCancelBatchImport} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close batch import review">
+                <FaTimes className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-6 py-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase text-emerald-700">Ready to import</p>
+                  <p className="mt-1 text-2xl font-semibold text-emerald-800">{batchImportPlan.acceptedRows.length}</p>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase text-amber-700">Will be skipped</p>
+                  <p className="mt-1 text-2xl font-semibold text-amber-800">{batchImportPlan.skippedRows.length}</p>
+                </div>
+              </div>
+
+              {batchImportPlan.skippedRows.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Skipped rows</p>
+                  <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
+                    {batchImportPlan.skippedRows.map((item) => (
+                      <div key={`${item.rowNumber}-${item.row.email}-${item.row.facultyId}-${item.row.studentNumber}`} className="border-b border-slate-100 px-4 py-3 last:border-b-0">
+                        <p className="text-sm font-semibold text-slate-950">Row {item.rowNumber}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {[item.row.role, item.row.studentNumber || item.row.facultyId, item.row.email].filter(Boolean).join(' | ')}
+                        </p>
+                        <p className="mt-2 text-sm text-amber-700">{item.issues.join(' | ')}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!batchImportPlan.acceptedRows.length && (
+                <p className="rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                  No valid rows are available to import. Fix the file and upload again.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:justify-end">
+              <button type="button" onClick={handleCancelBatchImport} className="rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!batchImportPlan.acceptedRows.length || isUploadingBatch}
+                onClick={handleConfirmBatchImport}
+                className="rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {isUploadingBatch ? 'Importing...' : 'Proceed with Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {batchSuccessModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-xl rounded-lg border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                  <FaCheckCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-base font-semibold text-slate-950">Batch import complete</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Created {batchSuccessModal.created} account{batchSuccessModal.created === 1 ? '' : 's'}.
+                    {batchSuccessModal.skippedRows.length ? ` Skipped ${batchSuccessModal.skippedRows.length} duplicate/invalid row${batchSuccessModal.skippedRows.length === 1 ? '' : 's'}.` : ''}
+                  </p>
+                </div>
+              </div>
+              <button type="button" onClick={handleCloseBatchSuccess} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close batch import success">
+                <FaTimes className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-6 py-5">
+              {batchSuccessModal.skippedRows.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Skipped rows</p>
+                  <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
+                    {batchSuccessModal.skippedRows.map((item) => (
+                      <div key={`${item.rowNumber}-${item.row.email}-${item.row.facultyId}-${item.row.studentNumber}`} className="border-b border-slate-100 px-4 py-3 last:border-b-0">
+                        <p className="text-sm font-semibold text-slate-950">Row {item.rowNumber}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {[item.row.role, item.row.studentNumber || item.row.facultyId, item.row.email].filter(Boolean).join(' | ')}
+                        </p>
+                        <p className="mt-2 text-sm text-amber-700">{item.issues.join(' | ')}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {batchSuccessModal.failed.length > 0 && (
+                <div className="rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                  Failed {batchSuccessModal.failed.length}: {batchSuccessModal.failed.slice(0, 3).join(' | ')}
+                  {batchSuccessModal.failed.length > 3 ? ` | +${batchSuccessModal.failed.length - 3} more` : ''}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end border-t border-slate-200 px-6 py-4">
+              <button type="button" onClick={handleCloseBatchSuccess} className="rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <aside className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${sidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
         <div className={`relative h-full w-72 px-4 py-5 transition-opacity duration-200 ease-in-out ${sidebarOpen ? 'opacity-100 delay-100' : 'pointer-events-none opacity-0'}`}>
         <div className="flex items-center justify-between">
@@ -1775,10 +2176,10 @@ function Admin() {
 
                 {profileOpen && (
                   <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                    <button type="button" onClick={() => showUserProfile(currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
+                    <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
                     <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Change password</button>
                     <div className="my-2 border-t border-slate-200" />
-                    <button type="button" onClick={toggleThemeSetting} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
+                    <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
                     <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Sign out</button>
                   </div>
                 )}

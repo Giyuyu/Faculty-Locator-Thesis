@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
 from device_utils import DeviceManager
-from firebase_config import get_data, set_data, update_data
+from firebase_config import get_current_environment, get_data, set_data, update_data
 from rfid_utils import SerialRfidListener, load_reader_config, normalize_rfid_value, reader_label
 import datetime
 import os
@@ -86,7 +86,8 @@ class LoginSystem:
     def setup_gui(self):
         """Setup the login GUI"""
         self.root = tk.Tk()
-        self.root.title("Faculty Login System")
+        environment = get_current_environment().upper()
+        self.root.title(f"Faculty Login System [{environment}]")
         self.root.geometry("540x500")
         self.root.configure(bg='#e0f7fa')
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -100,6 +101,9 @@ class LoginSystem:
         title_label = tk.Label(self.root, text="Faculty Login System",
                               font=('Arial', 16, 'bold'), bg='#e0f7fa')
         title_label.grid(row=0, column=0, columnspan=2, pady=(30,20))
+        env_label = tk.Label(self.root, text=f"Environment: {environment}",
+                             font=('Arial', 9, 'bold'), bg='#e0f7fa', fg='#607d8b')
+        env_label.grid(row=0, column=0, columnspan=2, sticky='s', pady=(0, 4))
         
         # Device Info Section
         device_info_frame = tk.Frame(self.root, bg='#e0f7fa')

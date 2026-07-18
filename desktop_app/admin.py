@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime
 from device_utils import DeviceManager
-from firebase_config import get_data, update_data
+from firebase_config import get_current_environment, get_data, update_data
 from rfid_utils import (
     SerialRfidListener,
     load_reader_config,
@@ -92,7 +92,8 @@ class AdminPanel:
     def setup_gui(self):
         """Setup the admin GUI"""
         self.root = tk.Tk()
-        self.root.title("Device Assignment Admin Panel")
+        environment = get_current_environment().upper()
+        self.root.title(f"Device Assignment Admin Panel [{environment}]")
         self.root.geometry("900x760")
         self.root.configure(bg='#f0f0f0')
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -104,7 +105,10 @@ class AdminPanel:
         # Title
         title_label = tk.Label(main_frame, text="Device Assignment Admin Panel", 
                               font=('Arial', 18, 'bold'), bg='#f0f0f0')
-        title_label.pack(pady=(0, 20))
+        title_label.pack(pady=(0, 4))
+        env_label = tk.Label(main_frame, text=f"Environment: {environment}",
+                             font=('Arial', 9, 'bold'), bg='#f0f0f0', fg='#607d8b')
+        env_label.pack(pady=(0, 16))
         
         # Device Info Section
         device_frame = tk.LabelFrame(main_frame, text="Current Device Information", 

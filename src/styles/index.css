@@ -1,4 +1,143 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: #f8fafc;
+  color: #0f172a;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+html.dark body,
+html.dark .App {
+  background: #020617;
+  color: #e2e8f0;
+}
+
+html.dark .bg-white,
+html.dark .bg-white\/80,
+html.dark .bg-white\/90,
+html.dark .bg-slate-50,
+html.dark .bg-slate-100,
+html.dark .bg-gray-50,
+html.dark .bg-gray-100 {
+  background-color: #0f172a;
+}
+
+html.dark .bg-white\/50,
+html.dark .bg-white\/60,
+html.dark .bg-slate-50\/80,
+html.dark .bg-gray-50\/80 {
+  background-color: rgb(15 23 42 / 0.72);
+}
+
+html.dark [class*="from-blue-50"][class*="via-indigo-50"][class*="to-purple-50"] {
+  background-image: linear-gradient(135deg, #020617, #111827, #1e1b4b);
+}
+
+html.dark .text-slate-950,
+html.dark .text-slate-900,
+html.dark .text-gray-950,
+html.dark .text-gray-900 {
+  color: #f8fafc;
+}
+
+html.dark .text-slate-800,
+html.dark .text-slate-700,
+html.dark .text-gray-800,
+html.dark .text-gray-700 {
+  color: #e2e8f0;
+}
+
+html.dark .text-slate-600,
+html.dark .text-slate-500,
+html.dark .text-gray-600,
+html.dark .text-gray-500 {
+  color: #94a3b8;
+}
+
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-gray-100,
+html.dark .border-gray-200,
+html.dark .border-white\/20 {
+  border-color: #1e293b;
+}
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #020617;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b;
+}
+
+html.dark option {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+html.dark table,
+html.dark thead,
+html.dark tbody,
+html.dark tr {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+html.dark th,
+html.dark td {
+  border-color: #1e293b;
+}
+
+html.dark .shadow-sm,
+html.dark .shadow,
+html.dark .shadow-md,
+html.dark .shadow-lg,
+html.dark .shadow-xl,
+html.dark .shadow-2xl {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.32);
+}
+
+html.dark .hover\:bg-slate-50:hover,
+html.dark .hover\:bg-slate-100:hover,
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-gray-100:hover {
+  background-color: #1e293b;
+}
+
+html.dark .swal2-popup {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+html.dark .swal2-title {
+  color: #f8fafc;
+}
+
+html.dark .swal2-html-container {
+  color: #cbd5e1;
+}
+
+html.dark .swal2-input,
+html.dark .swal2-select,
+html.dark .swal2-textarea {
+  background: #020617;
+  border-color: #334155;
+  color: #f8fafc;
+}
 
 a[href],
 button:not(:disabled),
