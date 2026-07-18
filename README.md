@@ -44,6 +44,24 @@ This starts the React/Vite app. Open the URL shown in the terminal, usually:
 http://localhost:5173
 ```
 
+For explicit environments:
+
+```bash
+npm run dev
+npm run dev:stg
+npm run dev:prod
+npm run build:stg
+npm run build:prod
+```
+
+Database targets:
+
+- `npm run dev` defaults to staging
+- `production` mode uses Firebase project `fac-loc`
+- `staging` mode uses Firebase project `fac-loc-stg`
+
+Git branches and Firebase databases are separate concerns. Branch `main` is intended for production code, and branch `stg` is intended for staging code. The actual database used by the web app is selected by the Vite mode and the `.env.production` / `.env.staging` files.
+
 ### Desktop Faculty Login
 
 ```bat
