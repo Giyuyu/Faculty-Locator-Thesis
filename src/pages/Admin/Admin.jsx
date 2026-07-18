@@ -189,6 +189,10 @@ function userPermissionId(userId, permissionId) {
   return `${userId}_${permissionId}`;
 }
 
+function userRecordPath(user) {
+  return `users/${user.user_key || user.user_id}`;
+}
+
 function buildPermissionSeedUpdates() {
   const updates = {};
 
@@ -589,15 +593,18 @@ function Admin() {
     setSavedRolePermissions(loadedRolePermissions);
     setSavedUserPermissions(loadedUserPermissions);
 
-    const rows = Object.values(users)
-      .map((user) => {
+    const rows = Object.entries(users)
+      .map(([key, user]) => {
+        const userId = user.user_id || key;
         const roleIds = Array.isArray(user.role_ids) && user.role_ids.length ? user.role_ids : [user.role_id || 'student'];
         return {
           ...user,
+          user_key: key,
+          user_id: userId,
           role_ids: roleIds,
           role_id: user.role_id || roleIds[0],
           display_name: getProfileName(user, students, faculties),
-          permissions: effectiveUserPermissions(loadedRolePermissions, loadedUserPermissions, user.user_id, roleIds),
+          permissions: effectiveUserPermissions(loadedRolePermissions, loadedUserPermissions, userId, roleIds),
         };
       })
       .sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
@@ -795,8 +802,8 @@ function Admin() {
       const primaryRoleChanged = user.role_id !== savedRoles.role_id;
 
       if (roleIdsChanged || primaryRoleChanged) {
-        updates[`users/${user.user_id}/role_id`] = user.role_id;
-        updates[`users/${user.user_id}/role_ids`] = currentRoleIds;
+        updates[`${userRecordPath(user)}/role_id`] = user.role_id;
+        updates[`${userRecordPath(user)}/role_ids`] = currentRoleIds;
       }
     });
 
@@ -836,7 +843,10 @@ function Admin() {
   };
 
   const handleStatusChange = async (userId, status) => {
-    await update(ref(database), { [`users/${userId}/status`]: status });
+    const target = managedUsers.find((user) => user.user_id === userId);
+    if (!target) return;
+
+    await update(ref(database), { [`${userRecordPath(target)}/status`]: status });
     setManagedUsers((current) => current.map((user) =>
       user.user_id === userId ? { ...user, status } : user
     ));
@@ -848,9 +858,9 @@ function Admin() {
 
     const temporaryPassword = generateTemporaryPassword();
     await update(ref(database), {
-      [`users/${selectedUser.user_id}/password`]: temporaryPassword,
-      [`users/${selectedUser.user_id}/password_reset_at`]: new Date().toISOString(),
-      [`users/${selectedUser.user_id}/password_reset_by`]: currentUser?.uid || 'admin',
+      [`${userRecordPath(selectedUser)}/password`]: temporaryPassword,
+      [`${userRecordPath(selectedUser)}/password_reset_at`]: new Date().toISOString(),
+      [`${userRecordPath(selectedUser)}/password_reset_by`]: currentUser?.uid || 'admin',
     });
 
     const credentials = {

@@ -138,15 +138,26 @@ const authenticateWithDatabasePassword = async (login, password) => {
   if (!snapshot.exists()) return null;
 
   const normalizedLogin = login.trim().toLowerCase();
-  const match = Object.entries(snapshot.val()).find(([key, value]) => {
+  const matches = Object.entries(snapshot.val()).filter(([key, value]) => {
     const user = value || {};
     const uid = user.user_id || key;
-    return (
-      String(user.username || '').trim().toLowerCase() === normalizedLogin ||
-      String(user.email || '').trim().toLowerCase() === normalizedLogin ||
-      String(uid || '').trim().toLowerCase() === normalizedLogin
-    );
+    const identifiers = [
+      user.username,
+      user.email,
+      uid,
+      key,
+    ].map((item) => String(item || '').trim().toLowerCase());
+
+    return identifiers.includes(normalizedLogin);
   });
+
+  const match = matches
+    .filter(([, value]) => {
+      const user = value || {};
+      const storedPassword = String(user.password || '');
+      return storedPassword && storedPassword !== 'managed_by_firebase_auth' && storedPassword === password;
+    })
+    .sort(([, a], [, b]) => String(b.password_reset_at || '').localeCompare(String(a.password_reset_at || '')))[0];
 
   if (!match) return null;
 
