@@ -12,7 +12,8 @@ import {
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
 import logo from '../../assets/sti_logo.png';
-import heroPoster from '../../assets/sti_hero2.jpg';
+//import heroPoster from '../../assets/sti_hero2.jpg';
+import adminVideo from '../../assets/videos/Admin.mp4';
 import facultyVideo from '../../assets/videos/Faculty.mp4';
 import studentVideo from '../../assets/videos/Student.mp4';
 import {
@@ -34,6 +35,7 @@ const modules = [
     path: '/admin',
     permission: 'access_admin_module',
     icon: FaUserShield,
+    videoSrc: adminVideo,
     checklist: ['Internal Signup', 'Batch Upload', 'Roles and Permissions', 'Floors and Rooms', 'Account Status'],
   },
   {
@@ -67,6 +69,9 @@ function Home() {
   const [currentUser, setCurrentUser] = useState(null);
   const [selectedModuleId, setSelectedModuleId] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [activeHeroVideo, setActiveHeroVideo] = useState('');
+  const [incomingHeroVideo, setIncomingHeroVideo] = useState('');
+  const [incomingVideoReady, setIncomingVideoReady] = useState(false);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('currentUser');
@@ -94,6 +99,32 @@ function Home() {
 
   const selectedModule = availableModules.find((module) => module.id === selectedModuleId) || availableModules[0];
   const heroVideo = selectedModule?.videoSrc || defaultHeroVideo;
+
+  useEffect(() => {
+    if (!heroVideo) return;
+
+    if (!activeHeroVideo) {
+      setActiveHeroVideo(heroVideo);
+      return;
+    }
+
+    if (heroVideo !== activeHeroVideo && heroVideo !== incomingHeroVideo) {
+      setIncomingHeroVideo(heroVideo);
+      setIncomingVideoReady(false);
+    }
+  }, [activeHeroVideo, heroVideo, incomingHeroVideo]);
+
+  useEffect(() => {
+    if (!incomingHeroVideo || !incomingVideoReady) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setActiveHeroVideo(incomingHeroVideo);
+      setIncomingHeroVideo('');
+      setIncomingVideoReady(false);
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [incomingHeroVideo, incomingVideoReady]);
 
   const handleEnter = () => {
     if (selectedModule) {
@@ -163,16 +194,33 @@ function Home() {
 
       <section className="relative h-[calc(100vh-17rem)] overflow-hidden">
         <video
-          key={heroVideo}
-          className="absolute inset-0 h-full w-full object-cover object-[center_18%]"
+          key={activeHeroVideo || heroVideo}
+          className={`absolute inset-0 h-full w-full object-cover object-[center_18%] transition-opacity duration-700 ease-out ${
+            incomingHeroVideo && incomingVideoReady ? 'opacity-0' : 'opacity-100'
+          }`}
           autoPlay
           muted
           loop
           playsInline
-          poster={heroPoster}
+          //poster={heroPoster}
         >
-          <source src={heroVideo} type="video/mp4" />
+          <source src={activeHeroVideo || heroVideo} type="video/mp4" />
         </video>
+        {incomingHeroVideo && (
+          <video
+            key={incomingHeroVideo}
+            className={`absolute inset-0 h-full w-full object-cover object-[center_18%] transition-opacity duration-700 ease-out ${
+              incomingVideoReady ? 'opacity-100' : 'opacity-0'
+            }`}
+            autoPlay
+            muted
+            loop
+            playsInline
+            onCanPlay={() => setIncomingVideoReady(true)}
+          >
+            <source src={incomingHeroVideo} type="video/mp4" />
+          </video>
+        )}
         <div className="absolute inset-0 bg-gradient-to-r from-white/90 via-white/60 to-white/10" />
         <div className="absolute inset-0 bg-slate-900/5" />
 
