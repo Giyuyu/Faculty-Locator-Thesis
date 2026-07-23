@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MdApps, MdPeople, MdSchedule, MdLogout, MdCloudUpload, MdLocationOn, MdAccessTime, MdEventBusy, MdClass, MdEventNote, MdCheck, MdDeleteSweep } from 'react-icons/md';
-import { FaBars, FaChevronDown, FaUserCircle } from 'react-icons/fa';
+import { FaBars, FaChevronDown, FaEye, FaUserCircle } from 'react-icons/fa';
 import * as XLSX from 'xlsx';
 import Swal from 'sweetalert2';
 import { ref, set, get, push, update, onValue } from 'firebase/database';
@@ -36,6 +36,8 @@ const facultyDisplayName = (faculty) => [
   faculty?.middle_name,
   faculty?.last_name,
 ].filter(Boolean).join(' ').trim();
+
+const normalizeFacultyId = (value) => String(value || '').trim().toUpperCase();
 
 const normalizePersonName = (value) => String(value || '')
   .toLowerCase()
@@ -98,6 +100,120 @@ const findFacultyByName = (inputName, faculties) => {
   return matches[0]?.faculty || null;
 };
 
+const INITIAL_SCHEDULE_UPLOAD_CONTEXT = {
+  schoolYear: '',
+  term: '',
+};
+
+const ARCHIVE_RETENTION_DAYS = 30;
+
+const addDays = (date, days) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const latestActiveUploadId = (uploads = {}) => {
+  const latest = Object.values(uploads)
+    .filter((upload) => (upload?.status || 'active') === 'active')
+    .sort((a, b) => new Date(b.uploaded_at || b.imported_at || 0) - new Date(a.uploaded_at || a.imported_at || 0))[0];
+  return latest?.schedule_upload_id || latest?.import_batch_id || '';
+};
+
+function excelColorToCss(color) {
+  const rgb = color?.rgb || color?.fgColor?.rgb || '';
+  if (!rgb) return '';
+  const normalized = rgb.length === 8 ? rgb.slice(2) : rgb;
+  return `#${normalized}`;
+}
+
+function workbookCellStyle(cell) {
+  const style = cell?.s || {};
+  const css = {};
+  const fillColor = excelColorToCss(style.fgColor || style.fill?.fgColor);
+  const fontColor = excelColorToCss(style.font?.color);
+  const cellValue = String(cell?.w ?? cell?.v ?? '');
+
+  if (fillColor && fillColor.toLowerCase() !== '#ffffff') css.backgroundColor = fillColor;
+  if (fontColor) css.color = fontColor;
+  if (style.font?.bold || (fillColor && cellValue)) css.fontWeight = 700;
+  if (style.font?.italic) css.fontStyle = 'italic';
+  if (style.font?.sz) css.fontSize = `${Math.max(8, Number(style.font.sz))}px`;
+  if (style.alignment?.horizontal) css.textAlign = style.alignment.horizontal;
+  if (style.alignment?.vertical) css.verticalAlign = style.alignment.vertical;
+  if (style.alignment?.wrapText || cellValue.includes('\n')) css.whiteSpace = 'pre-line';
+
+  return css;
+}
+
+function buildWorkbookDocumentPreview(workbook, fileName) {
+  const sheets = workbook.SheetNames.map((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    const fallbackRange = { s: { r: 0, c: 0 }, e: { r: 32, c: 8 } };
+    const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : fallbackRange;
+    const maxRow = Math.min(range.e.r, range.s.r + 79);
+    const maxCol = Math.min(range.e.c, range.s.c + 17);
+    const merges = sheet['!merges'] || [];
+    const coveredCells = new Set();
+    const mergeStarts = {};
+
+    merges.forEach((merge) => {
+      if (merge.e.r < range.s.r || merge.e.c < range.s.c || merge.s.r > maxRow || merge.s.c > maxCol) return;
+      const startKey = `${merge.s.r}:${merge.s.c}`;
+      mergeStarts[startKey] = {
+        rowSpan: Math.min(merge.e.r, maxRow) - merge.s.r + 1,
+        colSpan: Math.min(merge.e.c, maxCol) - merge.s.c + 1,
+      };
+      for (let r = merge.s.r; r <= Math.min(merge.e.r, maxRow); r += 1) {
+        for (let c = merge.s.c; c <= Math.min(merge.e.c, maxCol); c += 1) {
+          if (r !== merge.s.r || c !== merge.s.c) coveredCells.add(`${r}:${c}`);
+        }
+      }
+    });
+
+    const columnWidths = [];
+    for (let c = range.s.c; c <= maxCol; c += 1) {
+      const col = sheet['!cols']?.[c] || {};
+      columnWidths.push(Math.max(42, Math.min(240, Number(col.wpx || (col.wch ? col.wch * 7 : 86)))));
+    }
+
+    const rows = [];
+    for (let r = range.s.r; r <= maxRow; r += 1) {
+      const cells = [];
+      for (let c = range.s.c; c <= maxCol; c += 1) {
+        if (coveredCells.has(`${r}:${c}`)) continue;
+        const address = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[address] || {};
+        const merge = mergeStarts[`${r}:${c}`] || {};
+
+        cells.push({
+          key: address,
+          value: cell.w ?? cell.v ?? '',
+          rowSpan: merge.rowSpan || 1,
+          colSpan: merge.colSpan || 1,
+          style: workbookCellStyle(cell),
+        });
+      }
+      rows.push({
+        index: r + 1,
+        height: Math.max(20, Math.min(90, Number(sheet['!rows']?.[r]?.hpx || 22))),
+        cells,
+      });
+    }
+
+    return {
+      name: sheetName,
+      rows,
+      columnWidths,
+    };
+  });
+
+  return {
+    fileName,
+    sheets,
+  };
+}
+
 function FacultySchedules() {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => localStorage.getItem('moduleSidebarOpen') === 'true');
@@ -108,6 +224,7 @@ function FacultySchedules() {
   });
   const [schedules, setSchedules] = useState([]);
   const [facultyDirectory, setFacultyDirectory] = useState({});
+  const [scheduleUploadRecords, setScheduleUploadRecords] = useState({});
 
   useEffect(() => {
     if (!currentUser) {
@@ -127,6 +244,14 @@ function FacultySchedules() {
     const facultiesRef = ref(database, 'faculties');
     const unsubscribe = onValue(facultiesRef, (snapshot) => {
       setFacultyDirectory(snapshot.val() || {});
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const uploadsRef = ref(database, 'schedule_uploads');
+    const unsubscribe = onValue(uploadsRef, (snapshot) => {
+      setScheduleUploadRecords(snapshot.val() || {});
     });
     return () => unsubscribe();
   }, []);
@@ -157,15 +282,18 @@ function FacultySchedules() {
           return;
         }
 
-        const [subjectsSnapshot, roomsSnapshot, facultiesSnapshot] = await Promise.all([
+        const [subjectsSnapshot, roomsSnapshot, facultiesSnapshot, scheduleUploadsSnapshot] = await Promise.all([
           get(ref(database, 'subjects')),
           get(ref(database, 'rooms')),
           get(ref(database, 'faculties')),
+          get(ref(database, 'schedule_uploads')),
         ]);
 
         const subjects = subjectsSnapshot.val() || {};
         const rooms = roomsSnapshot.val() || {};
         const faculties = facultiesSnapshot.val() || {};
+        const scheduleUploads = scheduleUploadsSnapshot.val() || {};
+        const currentActiveUploadId = latestActiveUploadId(scheduleUploads);
         setFacultyDirectory(faculties);
         const facultyById = Object.values(faculties).reduce((acc, faculty) => {
           acc[faculty.faculty_id] = faculty;
@@ -174,11 +302,13 @@ function FacultySchedules() {
 
         const allSchedules = Object.values(snapshot.val())
           .filter(Boolean)
+          .filter((schedule) => (schedule.status || 'active') === 'active')
+          .filter((schedule) => !currentActiveUploadId || schedule.import_batch_id === currentActiveUploadId || schedule.original_import_batch_id === currentActiveUploadId)
           .map((schedule) => {
             const subject = subjects[schedule.subject_id] || {};
             const room = rooms[schedule.room_id] || {};
             const assignedFaculty = facultyById[schedule.faculty_id] || {};
-            const instructorName = facultyDisplayName(assignedFaculty) || schedule.instructor_name || 'Unassigned';
+            const instructorName = facultyDisplayName(assignedFaculty) || schedule.instructor_name || schedule.faculty_id || 'Unassigned';
             return {
               scheduleId: schedule.schedule_id,
               facultyId: schedule.faculty_id,
@@ -193,8 +323,9 @@ function FacultySchedules() {
               day: schedule.day || 'TBD',
               instructor: instructorName,
               assignedFacultyName: instructorName,
-              semester: schedule.semester || '',
+              term: schedule.term || schedule.semester || '',
               schoolYear: schedule.school_year || '',
+              status: schedule.status || 'active',
               importBatchId: schedule.import_batch_id || '',
               originalImportBatchId: schedule.original_import_batch_id || schedule.import_batch_id || '',
               importedAt: schedule.imported_at || '',
@@ -217,10 +348,18 @@ function FacultySchedules() {
   const [previewData, setPreviewData] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [showViewSchedules, setShowViewSchedules] = useState(false);
+  const [showArchiveViewer, setShowArchiveViewer] = useState(false);
+  const [archiveViewerRows, setArchiveViewerRows] = useState([]);
+  const [archiveViewerBatchId, setArchiveViewerBatchId] = useState('');
+  const [archiveViewerLoading, setArchiveViewerLoading] = useState(false);
   const [showSheetSelection, setShowSheetSelection] = useState(false);
   const [availableSheets, setAvailableSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
   const [workbookData, setWorkbookData] = useState(null);
+  const [scheduleWorkbookPreview, setScheduleWorkbookPreview] = useState(null);
+  const [selectedSchedulePreviewSheet, setSelectedSchedulePreviewSheet] = useState('');
+  const [showScheduleDocumentPreview, setShowScheduleDocumentPreview] = useState(false);
+  const [scheduleDocumentPreviewLoading, setScheduleDocumentPreviewLoading] = useState(false);
   const fileInputRef = useRef(null);
   const [selectedDays, setSelectedDays] = useState('All');
   const [selectedDisplayType, setSelectedDisplayType] = useState('All');
@@ -235,6 +374,8 @@ function FacultySchedules() {
   const [processingFile, setProcessingFile] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [lastUpdatedBy, setLastUpdatedBy] = useState('');
+  const [scheduleUploadContext, setScheduleUploadContext] = useState(INITIAL_SCHEDULE_UPLOAD_CONTEXT);
+  const [selectedScheduleUploadId, setSelectedScheduleUploadId] = useState('');
 
   const currentFaculty = useMemo(() => {
     // Since we don't have facultyLocations here, we can't compute it
@@ -577,6 +718,10 @@ function FacultySchedules() {
 
   const handleImportClick = () => {
     if (!currentUser?.permissions?.upload_schedules) return;
+    if (!scheduleUploadContext.schoolYear.trim() || !scheduleUploadContext.term.trim()) {
+      setImportError('School Year and Term are required before importing schedules.');
+      return;
+    }
     fileInputRef.current.click();
   };
 
@@ -587,6 +732,9 @@ function FacultySchedules() {
 
     if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls') && !file.name.endsWith('.xlsm')) {
       setImportError('Please select an Excel file (.xlsx, .xls, or .xlsm)');
+      setScheduleWorkbookPreview(null);
+      setSelectedSchedulePreviewSheet('');
+      setShowScheduleDocumentPreview(false);
       return;
     }
 
@@ -598,8 +746,13 @@ function FacultySchedules() {
     reader.onload = (e) => {
       debugLogs += 'LOG: File read successfully\n';
       const data = new Uint8Array(e.target.result);
-      const workbook = XLSX.read(data, { type: 'array' });
+      const workbook = XLSX.read(data, { type: 'array', cellStyles: true });
       debugLogs += 'LOG: Workbook loaded with sheets: ' + workbook.SheetNames.join(', ') + '\n';
+
+      const workbookPreview = buildWorkbookDocumentPreview(workbook, file.name);
+      setScheduleWorkbookPreview(workbookPreview);
+      setSelectedSchedulePreviewSheet(workbookPreview.sheets[0]?.name || '');
+      setShowScheduleDocumentPreview(false);
 
       // Show sheet selection if multiple sheets
       if (workbook.SheetNames.length > 1) {
@@ -611,6 +764,13 @@ function FacultySchedules() {
         processSheet(workbook, workbook.SheetNames[0]);
       }
       setProcessingFile(false);
+    };
+    reader.onerror = () => {
+      setProcessingFile(false);
+      setImportError('Unable to read the selected Excel file.');
+      setScheduleWorkbookPreview(null);
+      setSelectedSchedulePreviewSheet('');
+      setShowScheduleDocumentPreview(false);
     };
     reader.readAsArrayBuffer(file);
   };
@@ -656,6 +816,7 @@ function FacultySchedules() {
       time: ['time', 'schedule', 'period', 'start time', 'from'],
       day: ['day', 'weekday', 'date'],
       instructor: ['instructor', 'faculty', 'teacher', 'professor'],
+      faculty_id: ['faculty id', 'faculty_id', 'faculty code', 'faculty_code', 'instructor id', 'instructor_id'],
       end_time: ['end time', 'end_time', 'end', 'finish time', 'to time', 'to'],
       semester: ['semester', 'term'],
       school_year: ['school year', 'school_year', 'sy', 'academic year', 'academic_year']
@@ -663,7 +824,7 @@ function FacultySchedules() {
 
     const headerIndex = {};
     const requiredHeaders = ['section', 'course_description', 'room', 'time', 'day', 'instructor'];
-    const optionalHeaders = ['end_time', 'semester', 'school_year'];
+    const optionalHeaders = ['faculty_id', 'end_time', 'semester', 'school_year'];
 
     const allHeaders = [...requiredHeaders, ...optionalHeaders];
 
@@ -697,6 +858,7 @@ function FacultySchedules() {
         let time = cellToString(row[headerIndex.time]);
         const day = cellToString(row[headerIndex.day]);
         const instructor = cellToString(row[headerIndex.instructor]);
+        const facultyId = headerIndex.faculty_id !== -1 ? normalizeFacultyId(cellToString(row[headerIndex.faculty_id])) : '';
         const semester = headerIndex.semester !== -1 ? cellToString(row[headerIndex.semester]) : '';
         const schoolYear = headerIndex.school_year !== -1 ? cellToString(row[headerIndex.school_year]) : '';
 
@@ -822,8 +984,9 @@ function FacultySchedules() {
               endTime: formattedEnd || 'TBD',
               day: expandedDay,
               instructor: instructor || 'TBD',
-              semester: semester || 'TBD',
-              schoolYear: schoolYear || 'TBD'
+              facultyId,
+              term: semester || scheduleUploadContext.term.trim() || 'TBD',
+              schoolYear: schoolYear || scheduleUploadContext.schoolYear.trim() || 'TBD'
             };
             debugLogs += 'LOG: Processed schedule for row ' + i + ' day ' + expandedDay + ': ' + JSON.stringify(schedule) + '\n';
             importedSchedules.push(schedule);
@@ -844,16 +1007,26 @@ function FacultySchedules() {
         s.subject === schedule.subject &&
         s.day === schedule.day &&
         s.time === schedule.time &&
-        s.room === schedule.room
+        s.room === schedule.room &&
+        normalizeFacultyId(s.facultyId) === normalizeFacultyId(schedule.facultyId)
       )
     );
 
+    const facultyById = Object.values(facultyDirectory).reduce((acc, faculty) => {
+      if (faculty?.faculty_id) acc[normalizeFacultyId(faculty.faculty_id)] = faculty;
+      return acc;
+    }, {});
     const matchedPreview = uniqueSchedules.map((schedule) => {
-      const matchedFaculty = findFacultyByName(schedule.instructor, facultyDirectory);
+      const matchedFaculty = schedule.facultyId
+        ? facultyById[normalizeFacultyId(schedule.facultyId)]
+        : findFacultyByName(schedule.instructor, facultyDirectory);
       return {
         ...schedule,
-        facultyId: matchedFaculty?.faculty_id || '',
+        facultyId: schedule.facultyId || matchedFaculty?.faculty_id || '',
         assignedFacultyName: matchedFaculty ? facultyDisplayName(matchedFaculty) : '',
+        facultyMatchStatus: schedule.facultyId
+          ? (matchedFaculty ? 'matched_by_id' : 'unmatched_id')
+          : (matchedFaculty ? 'matched_by_name' : 'unmatched_name'),
       };
     });
 
@@ -870,6 +1043,11 @@ function FacultySchedules() {
   };
 
   const confirmImport = async () => {
+    if (!scheduleUploadContext.schoolYear.trim() || !scheduleUploadContext.term.trim()) {
+      setImportError('School Year and Term are required before saving schedules.');
+      return;
+    }
+
     setImportLoading(true);
     setImportProgress(0);
 
@@ -879,15 +1057,22 @@ function FacultySchedules() {
     }, 200);
 
     try {
-      const [facultiesSnapshot, roomsSnapshot, subjectsSnapshot] = await Promise.all([
+      const [
+        facultiesSnapshot,
+        roomsSnapshot,
+        subjectsSnapshot,
+        scheduleUploadsSnapshot,
+      ] = await Promise.all([
         get(ref(database, 'faculties')),
         get(ref(database, 'rooms')),
         get(ref(database, 'subjects')),
+        get(ref(database, 'schedule_uploads')),
       ]);
 
       const faculties = facultiesSnapshot.val() || {};
       const rooms = roomsSnapshot.val() || {};
       const subjects = subjectsSnapshot.val() || {};
+      const existingScheduleUploads = scheduleUploadsSnapshot.val() || {};
       setFacultyDirectory(faculties);
       const existingSubjectByName = Object.values(subjects).reduce((acc, subject) => {
         acc[normalizeLookup(subject.subject_name)] = subject;
@@ -901,14 +1086,27 @@ function FacultySchedules() {
       }, {});
 
       const updates = {};
-      const importBatchId = sanitizeId(`upload_${currentUser.uid}_${Date.now()}`);
+      const uploadSchoolYear = scheduleUploadContext.schoolYear.trim();
+      const uploadTerm = scheduleUploadContext.term.trim();
+      const importBatchId = sanitizeId(`schedule_upload_${uploadSchoolYear}_${uploadTerm}_${currentUser.uid}_${Date.now()}`);
       const importedAt = new Date().toISOString();
 
+      const previouslyActiveUploadIds = Object.values(existingScheduleUploads)
+        .filter((upload) => (upload?.status || 'active') === 'active')
+        .map((upload) => upload.schedule_upload_id || upload.import_batch_id)
+        .filter(Boolean);
+      const newUploadStatus = previouslyActiveUploadIds.length ? 'inactive' : 'active';
+      const facultyById = Object.values(faculties).reduce((acc, faculty) => {
+        if (faculty?.faculty_id) acc[normalizeFacultyId(faculty.faculty_id)] = faculty;
+        return acc;
+      }, {});
+
       previewData.forEach((schedule) => {
-        const matchedFaculty = schedule.facultyId
-          ? Object.values(faculties).find((faculty) => faculty.faculty_id === schedule.facultyId)
+        const providedFacultyId = normalizeFacultyId(schedule.facultyId);
+        const matchedFaculty = providedFacultyId
+          ? facultyById[providedFacultyId]
           : findFacultyByName(schedule.instructor, faculties);
-        const assignedFacultyId = matchedFaculty?.faculty_id || schedule.facultyId || '';
+        const assignedFacultyId = matchedFaculty?.faculty_id || providedFacultyId || '';
         const subjectName = schedule.subject || 'TBD';
         const subjectRecord = existingSubjectByName[normalizeLookup(subjectName)];
         const subjectId = subjectRecord?.subject_id || sanitizeId(`subj_${subjectName}`);
@@ -920,6 +1118,8 @@ function FacultySchedules() {
             subject_code: subjectCode,
             subject_name: subjectName,
             import_batch_id: importBatchId,
+            school_year: uploadSchoolYear,
+            term: uploadTerm,
             imported_at: importedAt,
             imported_by: currentUser.uid,
           };
@@ -940,7 +1140,7 @@ function FacultySchedules() {
           schedule.startTime,
           schedule.endTime,
           schedule.section,
-          schedule.semester,
+          schedule.term,
           schedule.schoolYear,
         ].join('_'));
 
@@ -955,8 +1155,9 @@ function FacultySchedules() {
           start_time: schedule.startTime || 'TBD',
           end_time: schedule.endTime || 'TBD',
           section: schedule.section || 'TBD',
-          semester: schedule.semester || 'TBD',
-          school_year: schedule.schoolYear || 'TBD',
+          term: schedule.term || uploadTerm || 'TBD',
+          school_year: schedule.schoolYear || uploadSchoolYear || 'TBD',
+          status: newUploadStatus,
           import_batch_id: importBatchId,
           imported_at: importedAt,
           imported_by: currentUser.uid,
@@ -964,6 +1165,18 @@ function FacultySchedules() {
         };
         updates[`schedule_upload_index/${importBatchId}/${scheduleId}`] = true;
       });
+
+      updates[`schedule_uploads/${importBatchId}`] = {
+        schedule_upload_id: importBatchId,
+        import_batch_id: importBatchId,
+        school_year: uploadSchoolYear,
+        term: uploadTerm,
+        uploaded_at: importedAt,
+        uploaded_by: currentUser.uid,
+        uploaded_by_name: currentUser.name || currentUser.username || 'Uploader',
+        schedule_count: previewData.length,
+        status: newUploadStatus,
+      };
 
       await update(ref(database), updates);
 
@@ -983,12 +1196,15 @@ function FacultySchedules() {
 
       setShowPreview(false);
       setPreviewData([]);
+      setScheduleUploadContext(INITIAL_SCHEDULE_UPLOAD_CONTEXT);
       // Reset file input to allow multiple imports
       fileInputRef.current.value = '';
       setImportError('');
       Swal.fire({
         title: 'Success!',
-        text: `Successfully imported ${previewData.length} schedule entries using the Subjects and Schedules schema.`,
+        text: newUploadStatus === 'active'
+          ? `Successfully imported ${previewData.length} schedule entries and set them as active.`
+          : `Successfully imported ${previewData.length} schedule entries as inactive. Review first, then click Set Active when ready.`,
         icon: 'success',
         confirmButtonText: 'OK'
       });
@@ -1045,7 +1261,13 @@ function FacultySchedules() {
     const assignedFacultyName = faculty ? facultyDisplayName(faculty) : '';
     setPreviewData((current) => current.map((schedule, scheduleIndex) => (
       scheduleIndex === index
-        ? { ...schedule, facultyId, assignedFacultyName, instructor: assignedFacultyName || schedule.instructor }
+        ? {
+          ...schedule,
+          facultyId,
+          assignedFacultyName,
+          instructor: assignedFacultyName || schedule.instructor,
+          facultyMatchStatus: facultyId ? 'manual' : 'unmatched_name',
+        }
         : schedule
     )));
   };
@@ -1120,8 +1342,9 @@ function FacultySchedules() {
             start_time: editForm.startTime || 'TBD',
             end_time: editForm.endTime || 'TBD',
             section: editForm.section || 'TBD',
-            semester: editForm.semester || 'TBD',
+            term: editForm.term || editForm.semester || 'TBD',
             school_year: editForm.schoolYear || editForm.school_year || 'TBD',
+            status: editForm.status || 'active',
             instructor_name: assignedFacultyName || editForm.instructor || '',
             ...(importBatchId ? {
               import_batch_id: importBatchId,
@@ -1163,7 +1386,7 @@ function FacultySchedules() {
           day: editForm.day || 'TBD',
           section: editForm.section || 'TBD',
           subject: editForm.subject || 'TBD',
-          semester: editForm.semester || 'TBD',
+          term: editForm.term || editForm.semester || 'TBD',
           schoolYear: editForm.schoolYear || editForm.school_year || 'TBD',
         };
         setSchedules((current) => current.map((schedule) =>
@@ -1217,99 +1440,414 @@ function FacultySchedules() {
     schedule.original_import_batch_id ||
     ''
   );
+  const currentScheduleUploadId = latestActiveUploadId(scheduleUploadRecords);
+  const scheduleGroupsFromRecords = Object.values(scheduleUploadRecords || {}).reduce((acc, upload) => {
+    const id = upload.schedule_upload_id || upload.import_batch_id;
+    if (!id) return acc;
+    const storedStatus = upload.status || 'active';
+    acc[id] = {
+      importBatchId: id,
+      schoolYear: upload.school_year || '',
+      term: upload.term || upload.semester || '',
+      importedAt: upload.uploaded_at || upload.imported_at || '',
+      importedBy: upload.uploaded_by || '',
+      importedByName: upload.uploaded_by_name || '',
+      count: Number(upload.schedule_count || 0),
+      status: storedStatus === 'active' && currentScheduleUploadId && id !== currentScheduleUploadId ? 'inactive' : storedStatus,
+      archivedAt: upload.archived_at || '',
+      retentionUntil: upload.retention_until || '',
+      hasUploadRecord: true,
+    };
+    return acc;
+  }, {});
+
   const uploadBatches = Object.values(schedules.reduce((acc, schedule) => {
     const scheduleBatchId = getScheduleBatchId(schedule);
     if (!scheduleBatchId) return acc;
     if (!acc[scheduleBatchId]) {
       acc[scheduleBatchId] = {
         importBatchId: scheduleBatchId,
+        schoolYear: schedule.schoolYear || '',
+        term: schedule.term || schedule.semester || '',
         importedAt: schedule.importedAt,
         importedBy: schedule.importedBy,
+        importedByName: '',
+        status: schedule.status || 'active',
+        archivedAt: schedule.archivedAt || schedule.archived_at || '',
+        retentionUntil: schedule.retentionUntil || schedule.retention_until || '',
         count: 0,
       };
     }
-    acc[scheduleBatchId].count += 1;
+    if (!acc[scheduleBatchId].hasUploadRecord) {
+      acc[scheduleBatchId].count += 1;
+    }
     if (new Date(schedule.importedAt || 0) > new Date(acc[scheduleBatchId].importedAt || 0)) {
       acc[scheduleBatchId].importedAt = schedule.importedAt;
     }
     return acc;
-  }, {})).sort((a, b) => new Date(b.importedAt || 0) - new Date(a.importedAt || 0));
+  }, { ...scheduleGroupsFromRecords })).sort((a, b) => new Date(b.importedAt || 0) - new Date(a.importedAt || 0));
+  const activeUploadBatches = uploadBatches.filter((batch) => !['archived', 'deleted'].includes(batch.status));
+  const archivedUploadBatches = uploadBatches.filter((batch) => batch.status === 'archived');
 
-  const handleDeleteUploadBatch = async () => {
-    if (!uploadBatches.length) {
+  const fetchScheduleUploadRows = async (batchId) => {
+    const [batchIndexSnapshot, schedulesSnapshot, subjectsSnapshot, roomsSnapshot, facultiesSnapshot] = await Promise.all([
+      get(ref(database, `schedule_upload_index/${batchId}`)),
+      get(ref(database, 'schedules')),
+      get(ref(database, 'subjects')),
+      get(ref(database, 'rooms')),
+      get(ref(database, 'faculties')),
+    ]);
+    const indexedScheduleIds = new Set(Object.keys(batchIndexSnapshot.val() || {}));
+    const allScheduleRecords = schedulesSnapshot.val() || {};
+    const subjects = subjectsSnapshot.val() || {};
+    const rooms = roomsSnapshot.val() || {};
+    const faculties = facultiesSnapshot.val() || {};
+    const facultyById = Object.values(faculties).reduce((acc, faculty) => {
+      if (faculty?.faculty_id) acc[faculty.faculty_id] = faculty;
+      return acc;
+    }, {});
+
+    return Object.values(allScheduleRecords)
+      .filter(Boolean)
+      .filter((schedule) =>
+        schedule.import_batch_id === batchId ||
+        schedule.original_import_batch_id === batchId ||
+        indexedScheduleIds.has(schedule.schedule_id)
+      )
+      .map((schedule) => {
+        const subject = subjects[schedule.subject_id] || {};
+        const room = rooms[schedule.room_id] || {};
+        const faculty = facultyById[schedule.faculty_id] || {};
+        return {
+          courseCode: subject.subject_code || schedule.subject_code || schedule.subject_id || '',
+          courseDescription: subject.subject_name || schedule.subject_name || schedule.subject_id || '',
+          day: schedule.day || '',
+          startTime: schedule.start_time || '',
+          endTime: schedule.end_time || '',
+          room: room.room_name || schedule.room_name || schedule.room_id || '',
+          instructor: facultyDisplayName(faculty) || schedule.instructor_name || '',
+          facultyId: schedule.faculty_id || '',
+          section: schedule.section || '',
+          schoolYear: schedule.school_year || '',
+          term: schedule.term || schedule.semester || '',
+        };
+      })
+      .sort((a, b) =>
+        String(a.courseCode).localeCompare(String(b.courseCode), undefined, { numeric: true }) ||
+        String(a.day).localeCompare(String(b.day)) ||
+        String(a.startTime).localeCompare(String(b.startTime))
+      );
+  };
+
+  const buildScheduleUploadDocumentPreview = (batch, rows) => {
+    const title = `${batch?.schoolYear || 'Unknown SY'} - ${batch?.term || 'Unknown Term'} Schedule Upload`;
+    const headers = ['Course Code', 'Course Description', 'Day', 'Start Time', 'End Time', 'Room', 'Instructor', 'Faculty ID', 'Section'];
+    const columnWidths = [110, 260, 90, 110, 110, 120, 220, 120, 120];
+    const previewRows = [
+      {
+        index: 1,
+        height: 34,
+        cells: [{
+          key: 'A1',
+          value: title,
+          rowSpan: 1,
+          colSpan: headers.length,
+          style: { fontWeight: 700, textAlign: 'center', backgroundColor: '#fff8dc' },
+        }],
+      },
+      {
+        index: 2,
+        height: 24,
+        cells: headers.map((header, index) => ({
+          key: `header-${index}`,
+          value: header,
+          rowSpan: 1,
+          colSpan: 1,
+          style: { fontWeight: 700, textAlign: 'center', backgroundColor: '#dbeafe' },
+        })),
+      },
+      ...rows.map((row, rowIndex) => ({
+        index: rowIndex + 3,
+        height: 24,
+        cells: [
+          row.courseCode,
+          row.courseDescription,
+          row.day,
+          row.startTime,
+          row.endTime,
+          row.room,
+          row.instructor,
+          row.facultyId,
+          row.section,
+        ].map((value, cellIndex) => ({
+          key: `row-${rowIndex}-cell-${cellIndex}`,
+          value,
+          rowSpan: 1,
+          colSpan: 1,
+          style: rowIndex % 2 === 0 ? { backgroundColor: '#f0fdf4' } : {},
+        })),
+      })),
+    ];
+
+    return {
+      fileName: `${batch?.schoolYear || 'schedule'}-${batch?.term || 'upload'}.xlsx`,
+      sheets: [{
+        name: 'Schedules',
+        rows: previewRows,
+        columnWidths,
+      }],
+    };
+  };
+
+  const handleOpenScheduleFileView = async () => {
+    if (!selectedScheduleUploadId) {
+      if (scheduleWorkbookPreview) {
+        setShowScheduleDocumentPreview(true);
+        return;
+      }
       Swal.fire({
-        title: 'No upload batch found',
-        text: 'There are no uploaded schedule batches to delete.',
+        title: 'No file to preview',
+        text: 'Upload an Excel file or select a School Year and Term upload first.',
         icon: 'info',
         confirmButtonText: 'OK',
       });
       return;
     }
 
-    const inputOptions = uploadBatches.reduce((acc, batch) => {
-      const dateLabel = batch.importedAt ? new Date(batch.importedAt).toLocaleString() : 'Unknown date';
-      acc[batch.importBatchId] = `${dateLabel} - ${batch.count} schedule${batch.count !== 1 ? 's' : ''}`;
-      return acc;
-    }, {});
+    const selectedBatch = activeUploadBatches.find((batch) => batch.importBatchId === selectedScheduleUploadId);
+    if (!selectedBatch) {
+      Swal.fire({
+        title: 'Unavailable upload',
+        text: 'Choose an active or inactive upload from the dropdown first.',
+        icon: 'info',
+        confirmButtonText: 'OK',
+      });
+      return;
+    }
 
-    const result = await Swal.fire({
-      title: 'Choose upload to delete',
-      input: 'select',
-      inputOptions,
-      inputValue: uploadBatches[0].importBatchId,
-      inputPlaceholder: 'Select an upload batch',
-      text: 'Schedules from the selected upload will be deleted together.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonText: 'Delete upload',
-      cancelButtonText: 'Cancel',
-      confirmButtonColor: '#dc2626',
-      inputValidator: (value) => (!value ? 'Please select an upload batch.' : undefined),
-    });
+    setScheduleDocumentPreviewLoading(true);
+    try {
+      const rows = await fetchScheduleUploadRows(selectedScheduleUploadId);
+      if (!rows.length) {
+        Swal.fire({
+          title: 'No schedules found',
+          text: 'This upload has no schedule rows to preview.',
+          icon: 'info',
+          confirmButtonText: 'OK',
+        });
+        return;
+      }
+      const preview = buildScheduleUploadDocumentPreview(selectedBatch, rows);
+      setScheduleWorkbookPreview(preview);
+      setSelectedSchedulePreviewSheet(preview.sheets[0]?.name || '');
+      setShowScheduleDocumentPreview(true);
+    } catch (error) {
+      console.error('Error opening schedule file view:', error);
+      Swal.fire({
+        title: 'Failed to open file view',
+        text: 'The selected schedule upload could not be loaded. Please try again.',
+        icon: 'error',
+        confirmButtonText: 'OK',
+      });
+    } finally {
+      setScheduleDocumentPreviewLoading(false);
+    }
+  };
 
-    if (!result.isConfirmed) return;
+  const loadArchivedUploadRows = async (batchId) => {
+    if (!batchId) {
+      setArchiveViewerRows([]);
+      return;
+    }
 
-    const selectedBatchId = result.value;
+    setArchiveViewerLoading(true);
+    try {
+      const rows = await fetchScheduleUploadRows(batchId);
+      setArchiveViewerRows(rows);
+    } catch (error) {
+      console.error('Error loading archived upload:', error);
+      setArchiveViewerRows([]);
+      Swal.fire({
+        title: 'Failed to load archive',
+        text: 'The archived upload could not be opened. Please try again.',
+        icon: 'error',
+        confirmButtonText: 'OK',
+      });
+    } finally {
+      setArchiveViewerLoading(false);
+    }
+  };
+
+  const handleScheduleUploadAction = async (action) => {
+    if (!activeUploadBatches.length) {
+      Swal.fire({
+        title: 'No upload batch found',
+        text: 'There are no uploaded schedule batches to manage.',
+        icon: 'info',
+        confirmButtonText: 'OK',
+      });
+      return;
+    }
+
+    if (!selectedScheduleUploadId) {
+      Swal.fire({
+        title: 'Select an upload',
+        text: 'Choose a School Year and Term upload group first.',
+        icon: 'info',
+        confirmButtonText: 'OK',
+      });
+      return;
+    }
+
+    const selectedBatchId = selectedScheduleUploadId;
+    const selectedBatch = activeUploadBatches.find((batch) => batch.importBatchId === selectedBatchId);
+    if (!selectedBatch) {
+      Swal.fire({
+        title: 'Unavailable upload',
+        text: 'Deleted or archived uploads are not available in this action. Use View Archives to restore archived uploads.',
+        icon: 'info',
+        confirmButtonText: 'OK',
+      });
+      return;
+    }
+
+    if (action === 'activate') {
+      if (selectedBatch.status === 'active') {
+        Swal.fire({
+          title: 'Already active',
+          text: 'This upload is already the current schedule.',
+          icon: 'info',
+          confirmButtonText: 'OK',
+        });
+        return;
+      }
+
+      const confirmResult = await Swal.fire({
+        title: 'Set active schedule?',
+        text: `This will make ${selectedBatch.schoolYear || 'Unknown SY'} ${selectedBatch.term || ''} the current schedule used by Faculty Tracker, Room Tracker, and Student views.`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Set Active',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#2563eb',
+      });
+
+      if (!confirmResult.isConfirmed) return;
+
+      const [indexSnapshot, schedulesSnapshot] = await Promise.all([
+        get(ref(database, 'schedule_upload_index')),
+        get(ref(database, 'schedules')),
+      ]);
+      const uploadIndex = indexSnapshot.val() || {};
+      const allScheduleRecords = schedulesSnapshot.val() || {};
+      const actionTime = new Date().toISOString();
+      const updates = {};
+
+      activeUploadBatches.forEach((batch) => {
+        const isSelected = batch.importBatchId === selectedBatchId;
+        updates[`schedule_uploads/${batch.importBatchId}/status`] = isSelected ? 'active' : 'inactive';
+        updates[`schedule_uploads/${batch.importBatchId}/${isSelected ? 'activated_at' : 'deactivated_at'}`] = actionTime;
+      });
+
+      Object.values(allScheduleRecords).forEach((schedule) => {
+        if (!schedule?.schedule_id) return;
+        const scheduleBatchId = schedule.import_batch_id || schedule.original_import_batch_id || '';
+        if (!activeUploadBatches.some((batch) => batch.importBatchId === scheduleBatchId)) return;
+        updates[`schedules/${schedule.schedule_id}/status`] = scheduleBatchId === selectedBatchId ? 'active' : 'inactive';
+        updates[`schedules/${schedule.schedule_id}/${scheduleBatchId === selectedBatchId ? 'activated_at' : 'deactivated_at'}`] = actionTime;
+      });
+
+      Object.entries(uploadIndex).forEach(([batchId, indexedSchedules]) => {
+        if (!activeUploadBatches.some((batch) => batch.importBatchId === batchId)) return;
+        Object.keys(indexedSchedules || {}).forEach((scheduleId) => {
+          updates[`schedules/${scheduleId}/status`] = batchId === selectedBatchId ? 'active' : 'inactive';
+          updates[`schedules/${scheduleId}/${batchId === selectedBatchId ? 'activated_at' : 'deactivated_at'}`] = actionTime;
+        });
+      });
+
+      await update(ref(database), updates);
+      await update(ref(database, 'lastScheduleUpdate'), {
+        name: currentUser.name,
+        time: actionTime,
+        active_import_batch_id: selectedBatchId,
+      });
+
+      Swal.fire({
+        title: 'Active schedule updated',
+        text: 'The selected upload is now the current schedule.',
+        icon: 'success',
+        confirmButtonText: 'OK',
+      });
+      return;
+    }
+
     const batchIndexSnapshot = await get(ref(database, `schedule_upload_index/${selectedBatchId}`));
     const indexedScheduleIds = new Set(Object.keys(batchIndexSnapshot.val() || {}));
-    const selectedBatchSchedules = schedules.filter((schedule) =>
-      getScheduleBatchId(schedule) === selectedBatchId ||
-      indexedScheduleIds.has(schedule.scheduleId)
-    );
+    const schedulesSnapshot = await get(ref(database, 'schedules'));
+    const allScheduleRecords = schedulesSnapshot.val() || {};
+    const selectedBatchSchedules = Object.values(allScheduleRecords)
+      .filter(Boolean)
+      .filter((schedule) =>
+        schedule.import_batch_id === selectedBatchId ||
+        schedule.original_import_batch_id === selectedBatchId ||
+        indexedScheduleIds.has(schedule.schedule_id)
+      );
+
     const confirmResult = await Swal.fire({
-      title: 'Confirm delete',
-      text: `This will delete ${selectedBatchSchedules.length} schedule entries and unused subjects from the selected upload.`,
+      title: action === 'archive' ? 'Confirm archive' : 'Confirm delete',
+      text: `This will ${action} ${selectedBatchSchedules.length} schedule entries from ${selectedBatch?.schoolYear || 'Unknown SY'} ${selectedBatch?.term || ''}.`,
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonText: 'Delete all',
+      confirmButtonText: action === 'archive' ? 'Archive all' : 'Delete all',
       cancelButtonText: 'Cancel',
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: action === 'archive' ? '#475569' : '#dc2626',
     });
 
     if (!confirmResult.isConfirmed) return;
 
     const subjectsSnapshot = await get(ref(database, 'subjects'));
     const allSubjects = subjectsSnapshot.val() || {};
-    const selectedSubjectIds = new Set(selectedBatchSchedules.map((schedule) => schedule.subjectId).filter(Boolean));
+    const selectedSubjectIds = new Set(selectedBatchSchedules.map((schedule) => schedule.subject_id).filter(Boolean));
     const remainingSubjectIds = new Set(
-      schedules
-        .filter((schedule) => getScheduleBatchId(schedule) !== selectedBatchId)
-        .map((schedule) => schedule.subjectId)
+      Object.values(allScheduleRecords)
+        .filter((schedule) => schedule?.import_batch_id !== selectedBatchId && schedule?.original_import_batch_id !== selectedBatchId)
+        .map((schedule) => schedule.subject_id)
         .filter(Boolean)
     );
     const updates = {};
+    const actionTime = new Date().toISOString();
+    const retentionUntil = addDays(actionTime, ARCHIVE_RETENTION_DAYS).toISOString();
     selectedBatchSchedules.forEach((schedule) => {
-      if (schedule.scheduleId) {
-        updates[`schedules/${schedule.scheduleId}`] = null;
+      if (!schedule.schedule_id) return;
+      if (action === 'archive') {
+        updates[`schedules/${schedule.schedule_id}/status`] = 'archived';
+        updates[`schedules/${schedule.schedule_id}/archived_at`] = actionTime;
+        updates[`schedules/${schedule.schedule_id}/retention_until`] = retentionUntil;
+      } else {
+        updates[`schedules/${schedule.schedule_id}`] = null;
       }
     });
-    updates[`schedule_upload_index/${selectedBatchId}`] = null;
+    if (action === 'archive') {
+      updates[`schedule_uploads/${selectedBatchId}/status`] = 'archived';
+      updates[`schedule_uploads/${selectedBatchId}/archived_at`] = actionTime;
+      updates[`schedule_uploads/${selectedBatchId}/retention_until`] = retentionUntil;
+    } else {
+      updates[`schedule_upload_index/${selectedBatchId}`] = null;
+      updates[`schedule_uploads/${selectedBatchId}/status`] = 'deleted';
+      updates[`schedule_uploads/${selectedBatchId}/deleted_at`] = new Date().toISOString();
+    }
     selectedSubjectIds.forEach((subjectId) => {
       const subject = allSubjects[subjectId];
       const canDeleteSubject = !remainingSubjectIds.has(subjectId) &&
         (!subject?.import_batch_id || subject.import_batch_id === selectedBatchId);
       if (canDeleteSubject) {
-        updates[`subjects/${subjectId}`] = null;
+        if (action === 'archive') {
+          updates[`subjects/${subjectId}/status`] = 'archived';
+          updates[`subjects/${subjectId}/archived_at`] = actionTime;
+          updates[`subjects/${subjectId}/retention_until`] = retentionUntil;
+        } else {
+          updates[`subjects/${subjectId}`] = null;
+        }
       }
     });
 
@@ -1317,12 +1855,181 @@ function FacultySchedules() {
     await update(ref(database, 'lastScheduleUpdate'), {
       name: currentUser.name,
       time: new Date().toISOString(),
-      deleted_import_batch_id: selectedBatchId,
+      [`${action}_import_batch_id`]: selectedBatchId,
     });
 
     Swal.fire({
-      title: 'Deleted',
-      text: 'The selected upload batch and its unused subjects have been removed.',
+      title: action === 'archive' ? 'Archived' : 'Deleted',
+      text: action === 'archive'
+        ? 'The selected upload batch has been archived.'
+        : 'The selected upload batch and its unused subjects have been removed.',
+      icon: 'success',
+      confirmButtonText: 'OK',
+    });
+  };
+
+  const handleViewArchivedUploads = async () => {
+    if (!archivedUploadBatches.length) {
+      Swal.fire({
+        title: 'No archives found',
+        text: 'There are no archived schedule uploads to restore.',
+        icon: 'info',
+        confirmButtonText: 'OK',
+      });
+      return;
+    }
+
+    const initialBatchId = archiveViewerBatchId || archivedUploadBatches[0].importBatchId;
+    setArchiveViewerBatchId(initialBatchId);
+    setShowArchiveViewer(true);
+    await loadArchivedUploadRows(initialBatchId);
+  };
+
+  const handleRestoreArchivedUpload = async () => {
+    if (!archiveViewerBatchId) return;
+
+    const result = await Swal.fire({
+      title: 'Restore archived upload?',
+      text: 'The upload will be restored as inactive. You can review it first, then use Set Active when ready.',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Restore',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#2563eb',
+    });
+
+    if (!result.isConfirmed) return;
+
+    const selectedBatchId = archiveViewerBatchId;
+    const batchIndexSnapshot = await get(ref(database, `schedule_upload_index/${selectedBatchId}`));
+    const indexedScheduleIds = new Set(Object.keys(batchIndexSnapshot.val() || {}));
+    const [schedulesSnapshot, subjectsSnapshot] = await Promise.all([
+      get(ref(database, 'schedules')),
+      get(ref(database, 'subjects')),
+    ]);
+    const allScheduleRecords = schedulesSnapshot.val() || {};
+    const allSubjects = subjectsSnapshot.val() || {};
+    const selectedBatchSchedules = Object.values(allScheduleRecords)
+      .filter(Boolean)
+      .filter((schedule) =>
+        schedule.import_batch_id === selectedBatchId ||
+        schedule.original_import_batch_id === selectedBatchId ||
+        indexedScheduleIds.has(schedule.schedule_id)
+      );
+    const subjectIds = new Set(selectedBatchSchedules.map((schedule) => schedule.subject_id).filter(Boolean));
+    const updates = {};
+
+    selectedBatchSchedules.forEach((schedule) => {
+      if (!schedule.schedule_id) return;
+      updates[`schedules/${schedule.schedule_id}/status`] = 'inactive';
+      updates[`schedules/${schedule.schedule_id}/restored_at`] = new Date().toISOString();
+      updates[`schedules/${schedule.schedule_id}/archived_at`] = null;
+      updates[`schedules/${schedule.schedule_id}/retention_until`] = null;
+    });
+
+    subjectIds.forEach((subjectId) => {
+      if (!allSubjects[subjectId]) return;
+      updates[`subjects/${subjectId}/status`] = 'inactive';
+      updates[`subjects/${subjectId}/restored_at`] = new Date().toISOString();
+      updates[`subjects/${subjectId}/archived_at`] = null;
+      updates[`subjects/${subjectId}/retention_until`] = null;
+    });
+
+    updates[`schedule_uploads/${selectedBatchId}/status`] = 'inactive';
+    updates[`schedule_uploads/${selectedBatchId}/restored_at`] = new Date().toISOString();
+    updates[`schedule_uploads/${selectedBatchId}/archived_at`] = null;
+    updates[`schedule_uploads/${selectedBatchId}/retention_until`] = null;
+
+    await update(ref(database), updates);
+    await update(ref(database, 'lastScheduleUpdate'), {
+      name: currentUser.name,
+      time: new Date().toISOString(),
+      restored_import_batch_id: selectedBatchId,
+    });
+
+    Swal.fire({
+      title: 'Restored',
+      text: 'The selected schedule upload has been restored as inactive. Use Set Active when ready.',
+      icon: 'success',
+      confirmButtonText: 'OK',
+    });
+  };
+
+  const handleDeleteArchivedUpload = async () => {
+    if (!archiveViewerBatchId) return;
+
+    const selectedBatch = archivedUploadBatches.find((batch) => batch.importBatchId === archiveViewerBatchId);
+    const result = await Swal.fire({
+      title: 'Delete archived upload?',
+      text: `This will permanently remove ${selectedBatch?.schoolYear || 'Unknown SY'} ${selectedBatch?.term || ''} from the archive list.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Delete archive',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+    });
+
+    if (!result.isConfirmed) return;
+
+    const selectedBatchId = archiveViewerBatchId;
+    const batchIndexSnapshot = await get(ref(database, `schedule_upload_index/${selectedBatchId}`));
+    const indexedScheduleIds = new Set(Object.keys(batchIndexSnapshot.val() || {}));
+    const [schedulesSnapshot, subjectsSnapshot] = await Promise.all([
+      get(ref(database, 'schedules')),
+      get(ref(database, 'subjects')),
+    ]);
+    const allScheduleRecords = schedulesSnapshot.val() || {};
+    const allSubjects = subjectsSnapshot.val() || {};
+    const selectedBatchSchedules = Object.values(allScheduleRecords)
+      .filter(Boolean)
+      .filter((schedule) =>
+        schedule.import_batch_id === selectedBatchId ||
+        schedule.original_import_batch_id === selectedBatchId ||
+        indexedScheduleIds.has(schedule.schedule_id)
+      );
+    const selectedSubjectIds = new Set(selectedBatchSchedules.map((schedule) => schedule.subject_id).filter(Boolean));
+    const remainingSubjectIds = new Set(
+      Object.values(allScheduleRecords)
+        .filter((schedule) => schedule?.import_batch_id !== selectedBatchId && schedule?.original_import_batch_id !== selectedBatchId)
+        .map((schedule) => schedule.subject_id)
+        .filter(Boolean)
+    );
+    const updates = {};
+
+    selectedBatchSchedules.forEach((schedule) => {
+      if (schedule?.schedule_id) updates[`schedules/${schedule.schedule_id}`] = null;
+    });
+    selectedSubjectIds.forEach((subjectId) => {
+      const subject = allSubjects[subjectId];
+      const canDeleteSubject = !remainingSubjectIds.has(subjectId) &&
+        (!subject?.import_batch_id || subject.import_batch_id === selectedBatchId);
+      if (canDeleteSubject) updates[`subjects/${subjectId}`] = null;
+    });
+    updates[`schedule_upload_index/${selectedBatchId}`] = null;
+    updates[`schedule_uploads/${selectedBatchId}/status`] = 'deleted';
+    updates[`schedule_uploads/${selectedBatchId}/deleted_at`] = new Date().toISOString();
+
+    await update(ref(database), updates);
+    await update(ref(database, 'lastScheduleUpdate'), {
+      name: currentUser.name,
+      time: new Date().toISOString(),
+      deleted_archived_import_batch_id: selectedBatchId,
+    });
+
+    const remainingArchives = archivedUploadBatches.filter((batch) => batch.importBatchId !== selectedBatchId);
+    if (remainingArchives.length) {
+      const nextBatchId = remainingArchives[0].importBatchId;
+      setArchiveViewerBatchId(nextBatchId);
+      await loadArchivedUploadRows(nextBatchId);
+    } else {
+      setArchiveViewerBatchId('');
+      setArchiveViewerRows([]);
+      setShowArchiveViewer(false);
+    }
+
+    Swal.fire({
+      title: 'Archive deleted',
+      text: 'The archived upload has been removed.',
       icon: 'success',
       confirmButtonText: 'OK',
     });
@@ -1414,51 +2121,148 @@ function FacultySchedules() {
         </header>
 
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Faculty Module</p>
-              <h1 className="mt-2 text-3xl font-bold text-slate-950 dark:text-gray-100">Schedules</h1>
-              <p className="mt-1 max-w-2xl text-sm text-slate-500 dark:text-gray-400">
-                Import, review, and manage faculty schedules in one clean timetable.
-              </p>
+          <div className={`mb-6 grid gap-4 ${canManageSchedules ? 'xl:grid-cols-[360px_minmax(0,1fr)] xl:items-stretch' : 'xl:grid-cols-1'}`}>
+            <div className={`rounded-lg border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800/80 ${canManageSchedules ? '' : 'max-w-none'}`}>
+              <div className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] text-blue-600 ring-1 ring-blue-100 dark:bg-blue-950/30 dark:text-blue-300 dark:ring-blue-900/60">
+                Faculty Module
+              </div>
+              <div className={`${canManageSchedules ? '' : 'flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between'}`}>
+                <div>
+                  <h1 className="mt-4 text-3xl font-bold leading-tight text-slate-950 dark:text-gray-100">
+                    {canManageSchedules ? 'Schedules' : 'My Schedule'}
+                  </h1>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-gray-400">
+                    {canManageSchedules
+                      ? 'Import, review, and manage faculty schedules in one clean timetable.'
+                      : 'View your assigned classes from the currently active schedule.'}
+                  </p>
+                </div>
+                {!canManageSchedules && (
+                  <div className="mt-5 rounded-md bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-100 dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700 lg:mt-0">
+                    {personalSchedules.length} assigned class{personalSchedules.length === 1 ? '' : 'es'} in the active schedule
+                  </div>
+                )}
+              </div>
+              {canManageSchedules && (
+                <div className="mt-5 rounded-md bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 ring-1 ring-slate-100 dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700">
+                  Active schedule controls what appears in trackers.
+                </div>
+              )}
             </div>
             {canManageSchedules && (
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button
-                  onClick={handleImportClick}
-                  disabled={processingFile}
-                  className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {processingFile ? (
-                    <>
-                      <svg className="h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Processing
-                    </>
-                  ) : (
-                    <>
-                      <MdCloudUpload className="h-5 w-5" />
-                      Import Excel
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => setShowViewSchedules(true)}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-                >
-                  <MdSchedule className="h-5 w-5" />
-                  View & Edit
-                </button>
-                <button
-                  onClick={handleDeleteUploadBatch}
-                  disabled={!uploadBatches.length}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-gray-800 dark:text-red-300"
-                >
-                  <MdDeleteSweep className="h-5 w-5" />
-                  Delete Upload
-                </button>
+              <div className="w-full rounded-lg border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/80">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    type="text"
+                    value={scheduleUploadContext.schoolYear}
+                    onChange={(event) => setScheduleUploadContext({ ...scheduleUploadContext, schoolYear: event.target.value })}
+                    placeholder="School Year e.g. 2026-2027"
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  />
+                  <input
+                    type="text"
+                    value={scheduleUploadContext.term}
+                    onChange={(event) => setScheduleUploadContext({ ...scheduleUploadContext, term: event.target.value })}
+                    placeholder="Term e.g. 1st Semester"
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  />
+                </div>
+
+                <div className="mt-3 grid gap-3 xl:grid-cols-[auto_auto_auto_minmax(260px,1fr)]">
+                  <button
+                    onClick={handleImportClick}
+                    disabled={processingFile}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {processingFile ? (
+                      <>
+                        <svg className="h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Processing
+                      </>
+                    ) : (
+                      <>
+                        <MdCloudUpload className="h-5 w-5" />
+                        Import Excel
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowViewSchedules(true)}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    <MdSchedule className="h-5 w-5" />
+                    View & Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenScheduleFileView}
+                    disabled={scheduleDocumentPreviewLoading || (!scheduleWorkbookPreview && !selectedScheduleUploadId)}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    {scheduleDocumentPreviewLoading ? (
+                      <>
+                        <svg className="h-4 w-4 animate-spin text-slate-600 dark:text-gray-100" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Loading
+                      </>
+                    ) : (
+                      <>
+                        <FaEye className="h-4 w-4" />
+                        Open File View
+                      </>
+                    )}
+                  </button>
+                  <select
+                    value={selectedScheduleUploadId}
+                    onChange={(event) => setSelectedScheduleUploadId(event.target.value)}
+                    className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    <option value="">Select SY/Term upload</option>
+                    {activeUploadBatches.map((batch) => (
+                      <option key={batch.importBatchId} value={batch.importBatchId}>
+                        {batch.schoolYear || 'Unknown SY'} - {batch.term || 'Unknown Term'} - {batch.count} schedule{batch.count === 1 ? '' : 's'} - {batch.status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <button
+                    onClick={() => handleScheduleUploadAction('activate')}
+                    disabled={!activeUploadBatches.length || !selectedScheduleUploadId}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300"
+                  >
+                    <MdCheck className="h-5 w-5" />
+                    Set Active
+                  </button>
+                  <button
+                    onClick={() => handleScheduleUploadAction('archive')}
+                    disabled={!activeUploadBatches.length || !selectedScheduleUploadId}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    Archive Upload
+                  </button>
+                  <button
+                    onClick={handleViewArchivedUploads}
+                    disabled={!archivedUploadBatches.length}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900/60 dark:bg-gray-900 dark:text-blue-300"
+                  >
+                    View Archives
+                  </button>
+                  <button
+                    onClick={() => handleScheduleUploadAction('delete')}
+                    disabled={!activeUploadBatches.length || !selectedScheduleUploadId}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-gray-900 dark:text-red-300"
+                  >
+                    <MdDeleteSweep className="h-5 w-5" />
+                    Delete Upload
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1676,6 +2480,70 @@ function FacultySchedules() {
                     </div>
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showScheduleDocumentPreview && scheduleWorkbookPreview && (
+        <div className="fixed inset-0 z-[80] flex flex-col bg-slate-950/55 backdrop-blur-sm">
+          <div className="flex items-center justify-between border-b border-slate-300 bg-white px-5 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Workbook Preview</p>
+              <h2 className="mt-1 text-lg font-bold text-slate-950 dark:text-gray-100">{scheduleWorkbookPreview.fileName}</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedSchedulePreviewSheet}
+                onChange={(event) => setSelectedSchedulePreviewSheet(event.target.value)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              >
+                {scheduleWorkbookPreview.sheets.map((sheet) => (
+                  <option key={sheet.name} value={sheet.name}>{sheet.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setShowScheduleDocumentPreview(false)}
+                className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto bg-[#ededed] p-8">
+            <div className="mx-auto w-fit min-w-[52rem] border border-slate-400 bg-white p-10 shadow-2xl shadow-slate-900/20">
+              <div className="min-h-[70rem] w-fit min-w-[46rem] overflow-visible">
+                <table className="border-collapse font-[Calibri,Arial,sans-serif] text-[12px] text-slate-950">
+                  <colgroup>
+                    {(scheduleWorkbookPreview.sheets.find((sheet) => sheet.name === selectedSchedulePreviewSheet)?.columnWidths || []).map((width, index) => (
+                      <col key={`${selectedSchedulePreviewSheet}-col-${index}`} style={{ width: `${width}px` }} />
+                    ))}
+                  </colgroup>
+                  <tbody>
+                    {(scheduleWorkbookPreview.sheets.find((sheet) => sheet.name === selectedSchedulePreviewSheet)?.rows || []).map((row) => (
+                      <tr key={`${selectedSchedulePreviewSheet}-row-${row.index}`} style={{ height: `${row.height}px` }}>
+                        {row.cells.map((cell) => (
+                          <td
+                            key={cell.key}
+                            rowSpan={cell.rowSpan}
+                            colSpan={cell.colSpan}
+                            className="min-w-10 border border-slate-900 px-1.5 py-0.5 align-middle leading-tight"
+                            style={{
+                              minHeight: `${row.height}px`,
+                              ...cell.style,
+                            }}
+                            title={String(cell.value || '')}
+                          >
+                            {cell.value}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -1900,18 +2768,37 @@ function FacultySchedules() {
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm">
-                            <select
-                              value={schedule.facultyId || ''}
-                              onChange={(e) => updatePreviewFaculty(index, e.target.value)}
-                              className="w-52 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                            >
-                              <option value="">Unmatched</option>
-                              {facultyOptions.map((faculty) => (
-                                <option key={faculty.faculty_id} value={faculty.faculty_id}>
-                                  {facultyDisplayName(faculty)}
-                                </option>
-                              ))}
-                            </select>
+                            <div className="space-y-1">
+                              <select
+                                value={schedule.facultyId || ''}
+                                onChange={(e) => updatePreviewFaculty(index, e.target.value)}
+                                className="w-52 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                              >
+                                <option value="">Unmatched</option>
+                                {facultyOptions.map((faculty) => (
+                                  <option key={faculty.faculty_id} value={faculty.faculty_id}>
+                                    {facultyDisplayName(faculty)}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                ['matched_by_id', 'manual'].includes(schedule.facultyMatchStatus)
+                                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : schedule.facultyMatchStatus === 'unmatched_id'
+                                    ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                              }`}>
+                                {schedule.facultyMatchStatus === 'matched_by_id'
+                                  ? 'Matched by Faculty ID'
+                                  : schedule.facultyMatchStatus === 'manual'
+                                    ? 'Manual assignment'
+                                  : schedule.facultyMatchStatus === 'unmatched_id'
+                                    ? 'Unknown Faculty ID'
+                                    : schedule.facultyMatchStatus === 'matched_by_name'
+                                      ? 'Name fallback'
+                                      : 'Unmatched'}
+                              </div>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-sm">
                             {isEditing ? (
@@ -1988,6 +2875,106 @@ function FacultySchedules() {
                     "Import " + previewData.length + " Schedules"
                   )}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showArchiveViewer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="flex h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Archive Workbook</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-950 dark:text-gray-100">Archived Schedule Preview</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRestoreArchivedUpload}
+                  disabled={!archiveViewerBatchId || archiveViewerLoading}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Restore Upload
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteArchivedUpload}
+                  disabled={!archiveViewerBatchId || archiveViewerLoading}
+                  className="rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-gray-900 dark:text-red-300"
+                >
+                  Delete Archive
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowArchiveViewer(false)}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 border-b border-slate-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900 md:grid-cols-[minmax(260px,1fr)_auto] md:items-center">
+              <select
+                value={archiveViewerBatchId}
+                onChange={async (event) => {
+                  setArchiveViewerBatchId(event.target.value);
+                  await loadArchivedUploadRows(event.target.value);
+                }}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              >
+                {archivedUploadBatches.map((batch) => {
+                  const retentionLabel = batch.retentionUntil
+                    ? `retained until ${new Date(batch.retentionUntil).toLocaleDateString()}`
+                    : `${ARCHIVE_RETENTION_DAYS}-day retention`;
+                  return (
+                    <option key={batch.importBatchId} value={batch.importBatchId}>
+                      {batch.schoolYear || 'Unknown SY'} - {batch.term || 'Unknown Term'} - {batch.count} schedules - {retentionLabel}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 dark:bg-gray-800 dark:text-gray-300">
+                {archiveViewerRows.length} row{archiveViewerRows.length === 1 ? '' : 's'} loaded
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto bg-slate-100 p-4 dark:bg-gray-950">
+              <div className="min-w-[1180px] border border-slate-300 bg-white font-sans text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                <div className="grid grid-cols-[44px_120px_260px_90px_105px_105px_120px_210px_120px_120px] bg-slate-200 text-center text-xs font-bold text-slate-700 dark:bg-gray-800 dark:text-gray-200">
+                  {['', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'].map((letter) => (
+                    <div key={letter || 'corner'} className="border-r border-b border-slate-300 px-2 py-2 dark:border-gray-700">{letter}</div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-[44px_120px_260px_90px_105px_105px_120px_210px_120px_120px] bg-yellow-50 text-center font-bold text-slate-950 dark:bg-yellow-950/30 dark:text-gray-100">
+                  <div className="border-r border-b border-slate-300 bg-slate-100 px-2 py-2 text-xs text-slate-600 dark:border-gray-700 dark:bg-gray-800">1</div>
+                  <div className="col-span-9 border-b border-slate-300 px-2 py-3 dark:border-gray-700">STI Locator Archived Schedule Upload</div>
+                </div>
+                <div className="grid grid-cols-[44px_120px_260px_90px_105px_105px_120px_210px_120px_120px] bg-blue-100 text-xs font-bold uppercase text-slate-900 dark:bg-blue-950/40 dark:text-gray-100">
+                  {['2', 'Course Code', 'Course Description', 'Day', 'Start Time', 'End Time', 'Room', 'Instructor', 'Faculty ID', 'Section'].map((header, index) => (
+                    <div key={header} className={`${index === 0 ? 'bg-slate-100 text-center text-slate-600 dark:bg-gray-800 dark:text-gray-300' : ''} border-r border-b border-slate-300 px-2 py-2 dark:border-gray-700`}>
+                      {header}
+                    </div>
+                  ))}
+                </div>
+
+                {archiveViewerLoading ? (
+                  <div className="px-4 py-12 text-center text-sm font-semibold text-slate-500 dark:text-gray-400">Loading archived workbook...</div>
+                ) : archiveViewerRows.length ? (
+                  archiveViewerRows.map((row, index) => (
+                    <div key={`${row.courseCode}-${row.day}-${row.startTime}-${index}`} className="grid grid-cols-[44px_120px_260px_90px_105px_105px_120px_210px_120px_120px] bg-white text-slate-800 odd:bg-green-50/50 dark:bg-gray-900 dark:text-gray-100 dark:odd:bg-emerald-950/10">
+                      {[index + 3, row.courseCode, row.courseDescription, row.day, row.startTime, row.endTime, row.room, row.instructor, row.facultyId, row.section].map((cell, cellIndex) => (
+                        <div key={`${cellIndex}-${cell}`} className={`${cellIndex === 0 ? 'bg-slate-100 text-center text-xs font-semibold text-slate-600 dark:bg-gray-800 dark:text-gray-300' : ''} min-h-9 truncate border-r border-b border-slate-300 px-2 py-2 dark:border-gray-700`} title={String(cell || '')}>
+                          {cell || ''}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-4 py-12 text-center text-sm font-semibold text-slate-500 dark:text-gray-400">No archived schedule rows found for this upload.</div>
+                )}
               </div>
             </div>
           </div>

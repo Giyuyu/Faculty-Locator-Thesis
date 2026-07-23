@@ -6,7 +6,7 @@ import { onValue, ref } from 'firebase/database';
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
 import logo from '../../assets/sti_logo.png';
-import { buildTrackerData } from '../../utils/trackerData';
+import { buildTrackerData, getReflectableSchedules } from '../../utils/trackerData';
 import {
   changeCurrentUserPassword,
   openThemeSettings,
@@ -62,7 +62,8 @@ function Student() {
           return acc;
         }, {});
 
-        const schedules = Object.values(data.schedules || {})
+        const currentSchedules = getReflectableSchedules(data.schedules || {}, data.schedule_uploads || {});
+        const schedules = Object.values(currentSchedules)
           .filter(Boolean)
           .map((schedule) => {
             const subject = subjects[schedule.subject_id] || {};
@@ -78,7 +79,8 @@ function Student() {
               endTime: schedule.end_time || 'TBD',
               section: schedule.section || 'TBD',
               room: room.room_name || schedule.room_name || schedule.room_id || 'TBD',
-              semester: schedule.semester || '',
+              semester: schedule.term || schedule.semester || '',
+              term: schedule.term || schedule.semester || '',
               schoolYear: schedule.school_year || '',
             };
           })

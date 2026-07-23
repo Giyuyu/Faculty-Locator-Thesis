@@ -52,6 +52,29 @@ const getScheduleRecord = (schedules, scheduleId) => {
   return Object.values(schedules || {}).find((schedule) => schedule.schedule_id === scheduleId) || null;
 };
 
+export const latestActiveUploadId = (uploads = {}) => {
+  const latest = Object.values(uploads || {})
+    .filter((upload) => (upload?.status || 'active') === 'active')
+    .sort((a, b) => new Date(b.uploaded_at || b.imported_at || 0) - new Date(a.uploaded_at || a.imported_at || 0))[0];
+
+  return latest?.schedule_upload_id || latest?.import_batch_id || '';
+};
+
+export const getReflectableSchedules = (schedules = {}, uploads = {}) => {
+  const currentUploadId = latestActiveUploadId(uploads);
+
+  return Object.values(schedules || {}).reduce((acc, schedule) => {
+    if (!schedule?.schedule_id) return acc;
+    if ((schedule.status || 'active') !== 'active') return acc;
+
+    const scheduleUploadId = schedule.import_batch_id || schedule.original_import_batch_id || '';
+    if (currentUploadId && scheduleUploadId !== currentUploadId) return acc;
+
+    acc[schedule.schedule_id] = schedule;
+    return acc;
+  }, {});
+};
+
 const normalizeScheduleDays = (dayValue) => {
   const dayMap = {
     M: 'Monday',
@@ -164,7 +187,7 @@ const buildFacultyLocation = ({ faculty, status, activeSession, rooms, subjects,
   const roomName = room?.room_name || schedule?.room_name || roomId || 'Not in room';
   const subjectId = liveSchedule?.subject_id || status?.current_subject_id || activeSession?.subject_id || schedule?.subject_id || '';
   const storedStatus = status?.current_status || (activeSession ? activeSession.session_status : 'Offline');
-  const currentStatus = activeSession && schedule?.subject_id ? 'In-Class' : storedStatus;
+  const currentStatus = activeSession ? (schedule?.subject_id ? 'In-Class' : 'Available') : storedStatus;
   const hasClass = currentStatus === 'In-Class' && subjectId;
 
   return {
@@ -186,7 +209,8 @@ const buildFacultyLocation = ({ faculty, status, activeSession, rooms, subjects,
     startTime: hasClass ? (schedule?.start_time || '') : '',
     endTime: hasClass ? (schedule?.end_time || '') : '',
     section: hasClass ? (schedule?.section || '') : '',
-    semester: hasClass ? (schedule?.semester || '') : '',
+    semester: hasClass ? (schedule?.term || schedule?.semester || '') : '',
+    term: hasClass ? (schedule?.term || schedule?.semester || '') : '',
     schoolYear: hasClass ? (schedule?.school_year || '') : '',
     isActive: currentStatus !== 'Offline',
     hasClass,
@@ -199,7 +223,7 @@ export const buildTrackerData = (data = {}) => {
   const sessions = data.faculty_login_sessions || {};
   const rooms = data.rooms || {};
   const subjects = data.subjects || {};
-  const schedules = data.schedules || {};
+  const schedules = getReflectableSchedules(data.schedules || {}, data.schedule_uploads || {});
 
   const statusByFaculty = Object.values(statuses).reduce((acc, status) => {
     if (status?.faculty_id) acc[status.faculty_id] = status;

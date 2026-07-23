@@ -20,6 +20,7 @@ import {
   FaCopy,
   FaDownload,
   FaKey,
+  FaEye,
   FaSave,
   FaSearch,
   FaSignOutAlt,
@@ -96,6 +97,11 @@ const INITIAL_ROOM_FORM = {
   roomStatus: 'Available',
 };
 
+const INITIAL_UPLOAD_CONTEXT = {
+  schoolYear: '',
+  term: '',
+};
+
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: FaChartLine },
   { id: 'accounts', label: 'Accounts', icon: FaUserPlus },
@@ -113,6 +119,7 @@ const statusClasses = {
   Reserved: 'bg-violet-50 text-violet-700 ring-violet-200',
   'Under Maintenance': 'bg-amber-50 text-amber-700 ring-amber-200',
   inactive: 'bg-slate-100 text-slate-700 ring-slate-200',
+  archived: 'bg-slate-100 text-slate-700 ring-slate-200',
   Present: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   Away: 'bg-slate-100 text-slate-700 ring-slate-200',
   Ready: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
@@ -234,6 +241,18 @@ function userRecordPath(user) {
   return `users/${user.user_key || user.user_id}`;
 }
 
+function resolveAccountStatus(user, profile) {
+  const userStatus = String(user?.status || '').toLowerCase();
+  const profileStatus = String(profile?.status || '').toLowerCase();
+
+  if (['deleted', 'archived'].includes(userStatus) || ['deleted', 'archived'].includes(profileStatus)) {
+    return userStatus === 'deleted' || profileStatus === 'deleted' ? 'deleted' : 'archived';
+  }
+
+  if (userStatus === 'inactive' || profileStatus === 'inactive') return 'inactive';
+  return 'active';
+}
+
 function buildPermissionSeedUpdates() {
   const updates = {};
 
@@ -324,7 +343,7 @@ async function createProvisionedAuthUser(email, password) {
   }
 }
 
-function buildUserUpdates(user, form) {
+function buildUserUpdates(user, form, uploadMeta = null) {
   const role = form.role;
   const createdDate = new Date().toISOString();
   const status = 'active';
@@ -341,6 +360,11 @@ function buildUserUpdates(user, form) {
       role_ids: [role],
       status,
       created_date: createdDate,
+      ...(uploadMeta ? {
+        account_upload_id: uploadMeta.uploadId,
+        school_year: uploadMeta.schoolYear,
+        term: uploadMeta.term,
+      } : {}),
     },
     ...buildPermissionSeedUpdates(),
   };
@@ -354,6 +378,12 @@ function buildUserUpdates(user, form) {
       first_name: firstName,
       middle_name: middleName,
       last_name: lastName,
+      status,
+      ...(uploadMeta ? {
+        account_upload_id: uploadMeta.uploadId,
+        school_year: uploadMeta.schoolYear,
+        term: uploadMeta.term,
+      } : {}),
     };
   }
 
@@ -368,6 +398,11 @@ function buildUserUpdates(user, form) {
       department: form.department.trim(),
       email: form.email.trim(),
       status,
+      ...(uploadMeta ? {
+        account_upload_id: uploadMeta.uploadId,
+        school_year: uploadMeta.schoolYear,
+        term: uploadMeta.term,
+      } : {}),
     };
   }
 
@@ -552,6 +587,100 @@ function formatBatchSkippedSummary(skippedRows) {
   return `${summaries.join(' | ')}${skippedRows.length > 3 ? ` | +${skippedRows.length - 3} more` : ''}`;
 }
 
+function excelColorToCss(color) {
+  const rgb = color?.rgb || color?.fgColor?.rgb || '';
+  if (!rgb) return '';
+  const normalized = rgb.length === 8 ? rgb.slice(2) : rgb;
+  return `#${normalized}`;
+}
+
+function workbookCellStyle(cell) {
+  const style = cell?.s || {};
+  const css = {};
+  const fillColor = excelColorToCss(style.fgColor || style.fill?.fgColor);
+  const fontColor = excelColorToCss(style.font?.color);
+  const cellValue = String(cell?.w ?? cell?.v ?? '');
+
+  if (fillColor && fillColor.toLowerCase() !== '#ffffff') css.backgroundColor = fillColor;
+  if (fontColor) css.color = fontColor;
+  if (style.font?.bold || (fillColor && cellValue)) css.fontWeight = 700;
+  if (style.font?.italic) css.fontStyle = 'italic';
+  if (style.font?.sz) css.fontSize = `${Math.max(8, Number(style.font.sz))}px`;
+  if (style.alignment?.horizontal) css.textAlign = style.alignment.horizontal;
+  if (style.alignment?.vertical) css.verticalAlign = style.alignment.vertical;
+  if (style.alignment?.wrapText || cellValue.includes('\n')) css.whiteSpace = 'pre-line';
+
+  return css;
+}
+
+function buildWorkbookDocumentPreview(workbook, fileName) {
+  const sheets = workbook.SheetNames.map((sheetName, index) => {
+    const sheet = workbook.Sheets[sheetName];
+    const fallbackRange = { s: { r: 0, c: 0 }, e: { r: 32, c: 8 } };
+    const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : fallbackRange;
+    const maxRow = Math.min(range.e.r, range.s.r + 79);
+    const maxCol = Math.min(range.e.c, range.s.c + 17);
+    const merges = sheet['!merges'] || [];
+    const coveredCells = new Set();
+    const mergeStarts = {};
+
+    merges.forEach((merge) => {
+      if (merge.e.r < range.s.r || merge.e.c < range.s.c || merge.s.r > maxRow || merge.s.c > maxCol) return;
+      const startKey = `${merge.s.r}:${merge.s.c}`;
+      mergeStarts[startKey] = {
+        rowSpan: Math.min(merge.e.r, maxRow) - merge.s.r + 1,
+        colSpan: Math.min(merge.e.c, maxCol) - merge.s.c + 1,
+      };
+      for (let r = merge.s.r; r <= Math.min(merge.e.r, maxRow); r += 1) {
+        for (let c = merge.s.c; c <= Math.min(merge.e.c, maxCol); c += 1) {
+          if (r !== merge.s.r || c !== merge.s.c) coveredCells.add(`${r}:${c}`);
+        }
+      }
+    });
+
+    const columnWidths = [];
+    for (let c = range.s.c; c <= maxCol; c += 1) {
+      const col = sheet['!cols']?.[c] || {};
+      columnWidths.push(Math.max(42, Math.min(240, Number(col.wpx || (col.wch ? col.wch * 7 : 86)))));
+    }
+
+    const rows = [];
+    for (let r = range.s.r; r <= maxRow; r += 1) {
+      const cells = [];
+      for (let c = range.s.c; c <= maxCol; c += 1) {
+        if (coveredCells.has(`${r}:${c}`)) continue;
+        const address = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[address] || {};
+        const merge = mergeStarts[`${r}:${c}`] || {};
+
+        cells.push({
+          key: address,
+          value: cell.w ?? cell.v ?? '',
+          rowSpan: merge.rowSpan || 1,
+          colSpan: merge.colSpan || 1,
+          style: workbookCellStyle(cell),
+        });
+      }
+      rows.push({
+        index: r + 1,
+        height: Math.max(20, Math.min(90, Number(sheet['!rows']?.[r]?.hpx || 22))),
+        cells,
+      });
+    }
+
+    return {
+      name: sheetName,
+      rows,
+      columnWidths,
+    };
+  });
+
+  return {
+    fileName,
+    sheets,
+  };
+}
+
 async function fetchAccountDuplicateIndex() {
   const [usersSnapshot, studentsSnapshot, facultiesSnapshot] = await Promise.all([
     get(ref(database, 'users')),
@@ -591,7 +720,17 @@ function Admin() {
   const [batchRows, setBatchRows] = useState([]);
   const [batchResult, setBatchResult] = useState('');
   const [batchImportPlan, setBatchImportPlan] = useState(null);
+  const [batchWorkbookPreview, setBatchWorkbookPreview] = useState(null);
+  const [selectedBatchPreviewSheet, setSelectedBatchPreviewSheet] = useState('');
+  const [showBatchDocumentPreview, setShowBatchDocumentPreview] = useState(false);
   const [batchSuccessModal, setBatchSuccessModal] = useState(null);
+  const [batchActionModal, setBatchActionModal] = useState(null);
+  const [batchNoticeModal, setBatchNoticeModal] = useState(null);
+  const [archiveActionModal, setArchiveActionModal] = useState(null);
+  const [batchUploadContext, setBatchUploadContext] = useState(INITIAL_UPLOAD_CONTEXT);
+  const [selectedAccountUploadId, setSelectedAccountUploadId] = useState('');
+  const [selectedArchivedAccountUploadId, setSelectedArchivedAccountUploadId] = useState('');
+  const [showAccountArchiveViewer, setShowAccountArchiveViewer] = useState(false);
   const [isUploadingBatch, setIsUploadingBatch] = useState(false);
   const [managedUsers, setManagedUsers] = useState([]);
   const [rolePermissions, setRolePermissions] = useState({});
@@ -702,6 +841,24 @@ function Admin() {
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [adminLiveData]);
 
+  const liveStudentRows = useMemo(() => {
+    const students = adminLiveData.students || {};
+    const usersById = Object.values(adminLiveData.users || {}).reduce((acc, user) => {
+      if (user?.user_id) acc[user.user_id] = user;
+      return acc;
+    }, {});
+
+    return Object.values(students).map((student) => {
+      const user = usersById[student.user_id] || {};
+      return {
+        name: [student.first_name, student.middle_name, student.last_name].filter(Boolean).join(' ') || student.student_number || student.student_id,
+        studentNumber: student.student_number || student.student_id || 'Not Available',
+        email: user.username || user.email || 'No email',
+        status: student.status || user.status || 'active',
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }, [adminLiveData]);
+
   const liveReportRows = useMemo(() => {
     const lastScheduleUpdate = adminLiveData.lastScheduleUpdate || {};
     const uploadBatches = Object.keys(adminLiveData.schedule_upload_index || {}).length;
@@ -741,6 +898,85 @@ function Admin() {
     );
   }, [liveFacultyRows, searchTerm]);
 
+  const filteredStudents = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    return liveStudentRows.filter((student) =>
+      [student.name, student.studentNumber, student.email, student.status].some((value) => String(value || '').toLowerCase().includes(term))
+    );
+  }, [liveStudentRows, searchTerm]);
+
+  const dashboardInsights = useMemo(() => {
+    const facultiesById = adminLiveData.faculties || {};
+    const roomsById = adminLiveData.rooms || {};
+    const statusesByFaculty = Object.values(adminLiveData.faculty_status || {}).reduce((acc, status) => {
+      if (status?.faculty_id) acc[status.faculty_id] = status;
+      return acc;
+    }, {});
+    const facultyCounts = {};
+    const roomCounts = {};
+
+    Object.values(adminLiveData.faculty_login_sessions || {}).forEach((session) => {
+      if (session?.faculty_id) facultyCounts[session.faculty_id] = (facultyCounts[session.faculty_id] || 0) + 1;
+      if (session?.room_id) roomCounts[session.room_id] = (roomCounts[session.room_id] || 0) + 1;
+    });
+
+    const facultyName = (facultyId) => {
+      const faculty = facultiesById[facultyId] || {};
+      return [faculty.first_name, faculty.middle_name, faculty.last_name].filter(Boolean).join(' ') || facultyId || 'Unknown faculty';
+    };
+
+    const roomName = (roomId) => {
+      const room = roomsById[roomId] || {};
+      return room.room_name || roomId || 'Unknown room';
+    };
+
+    const frequentlyTrackedFaculty = Object.entries(facultyCounts)
+      .map(([facultyId, count]) => {
+        const status = statusesByFaculty[facultyId] || {};
+        return {
+          id: facultyId,
+          name: facultyName(facultyId),
+          count,
+          room: roomName(status.current_room_id),
+          status: status.current_status || 'Offline',
+        };
+      })
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 5);
+
+    const frequentlyUsedRooms = Object.entries(roomCounts)
+      .map(([roomId, count]) => {
+        const room = roomsById[roomId] || {};
+        return {
+          id: roomId,
+          name: roomName(roomId),
+          count,
+          floor: room.floor || 'No floor',
+          status: room.room_status || 'Available',
+        };
+      })
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 5);
+
+    const maintenanceRooms = Object.values(roomsById)
+      .filter((room) => room?.room_status === 'Under Maintenance')
+      .map((room) => ({
+        id: room.room_id,
+        name: room.room_name || room.room_id,
+        count: roomCounts[room.room_id] || 0,
+        floor: room.floor || 'No floor',
+        status: room.room_status || 'Under Maintenance',
+      }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 5);
+
+    return {
+      frequentlyTrackedFaculty,
+      frequentlyUsedRooms,
+      maintenanceRooms,
+    };
+  }, [adminLiveData]);
+
   const roomRows = useMemo(() => {
     return rooms;
   }, [rooms]);
@@ -754,6 +990,110 @@ function Admin() {
         .some((value) => String(value || '').toLowerCase().includes(term))
     );
   }, [managedUsers, userSearchTerm]);
+
+  const accountUploadGroups = useMemo(() => {
+    const uploadRecords = adminLiveData.account_uploads || {};
+    const uploadIndex = adminLiveData.account_upload_index || {};
+    const users = adminLiveData.users || {};
+    const groups = {};
+
+    Object.values(uploadRecords).forEach((upload) => {
+      const id = upload.account_upload_id || upload.upload_id;
+      if (!id) return;
+      groups[id] = {
+        uploadId: id,
+        schoolYear: upload.school_year || '',
+        term: upload.term || '',
+        uploadedAt: upload.uploaded_at || upload.created_at || '',
+        uploadedByName: upload.uploaded_by_name || '',
+        status: upload.status || 'active',
+        userIds: new Set(Object.keys(uploadIndex[id] || {})),
+      };
+    });
+
+    Object.values(users).forEach((user) => {
+      const uploadId = user.account_upload_id;
+      if (!uploadId) return;
+      if (!groups[uploadId]) {
+        groups[uploadId] = {
+          uploadId,
+          schoolYear: user.school_year || '',
+          term: user.term || '',
+          uploadedAt: user.created_date || '',
+          uploadedByName: '',
+          status: 'active',
+          userIds: new Set(),
+        };
+      }
+      groups[uploadId].userIds.add(user.user_id);
+    });
+
+    return Object.values(groups)
+      .map((group) => ({
+        ...group,
+        count: group.userIds.size,
+      }))
+      .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
+  }, [adminLiveData]);
+
+  const manageableAccountUploadGroups = useMemo(
+    () => accountUploadGroups.filter((group) => !['archived', 'deleted'].includes(group.status)),
+    [accountUploadGroups]
+  );
+
+  const archivedAccountUploadGroups = useMemo(
+    () => accountUploadGroups.filter((group) => group.status === 'archived'),
+    [accountUploadGroups]
+  );
+
+  const accountUploadStats = useMemo(() => ({
+    active: accountUploadGroups.filter((group) => group.status === 'active').length,
+    inactive: accountUploadGroups.filter((group) => group.status === 'inactive').length,
+    archived: archivedAccountUploadGroups.length,
+    totalAccounts: accountUploadGroups.reduce((sum, group) => sum + Number(group.count || 0), 0),
+  }), [accountUploadGroups, archivedAccountUploadGroups.length]);
+
+  const accountArchiveViewerRows = useMemo(() => {
+    if (!selectedArchivedAccountUploadId) return [];
+
+    const users = adminLiveData.users || {};
+    const students = adminLiveData.students || {};
+    const faculties = adminLiveData.faculties || {};
+    const selectedGroup = archivedAccountUploadGroups.find((group) => group.uploadId === selectedArchivedAccountUploadId);
+    if (!selectedGroup) return [];
+
+    return [...selectedGroup.userIds]
+      .map((userId) => {
+        const userEntry = Object.entries(users).find(([, user]) => user?.user_id === userId);
+        const user = userEntry?.[1] || {};
+        const role = user.role_id || user.role_ids?.[0] || '';
+        const student = Object.values(students).find((item) => item?.user_id === userId) || {};
+        const faculty = Object.values(faculties).find((item) => item?.user_id === userId) || {};
+        const profile = role === 'student' ? student : faculty;
+        return {
+          role,
+          accountId: role === 'student' ? (student.student_number || student.student_id || '') : (faculty.faculty_id || ''),
+          firstName: profile.first_name || '',
+          middleName: profile.middle_name || '',
+          lastName: profile.last_name || '',
+          department: faculty.department || '',
+          email: user.username || user.email || faculty.email || '',
+          status: user.status || profile.status || 'active',
+        };
+      })
+      .sort((a, b) => String(a.role).localeCompare(String(b.role)) || String(a.lastName).localeCompare(String(b.lastName)));
+  }, [adminLiveData, archivedAccountUploadGroups, selectedArchivedAccountUploadId]);
+
+  const selectedArchivedAccountUpload = useMemo(() => {
+    if (!selectedArchivedAccountUploadId) return null;
+    return archivedAccountUploadGroups.find((group) => group.uploadId === selectedArchivedAccountUploadId) || null;
+  }, [archivedAccountUploadGroups, selectedArchivedAccountUploadId]);
+
+  const canActOnSelectedArchive = Boolean(
+    selectedArchivedAccountUpload &&
+    selectedArchivedAccountUpload.userIds?.size &&
+    accountArchiveViewerRows.length
+  );
 
   const selectedUser = useMemo(() => {
     return managedUsers.find((user) => user.user_id === selectedUserId) || null;
@@ -809,13 +1149,17 @@ function Admin() {
       .map(([key, user]) => {
         const userId = user.user_id || key;
         const roleIds = normalizeAssignedRoles(Array.isArray(user.role_ids) && user.role_ids.length ? user.role_ids : [user.role_id || 'student']);
+        const primaryRole = roleIds.includes('admin') ? 'admin' : user.role_id || roleIds[0];
+        const profileSource = primaryRole === 'student' ? students : faculties;
+        const profile = Object.values(profileSource).find((item) => item?.user_id === userId) || {};
         return {
           ...user,
           user_key: key,
           user_id: userId,
           role_ids: roleIds,
-          role_id: roleIds.includes('admin') ? 'admin' : user.role_id || roleIds[0],
+          role_id: primaryRole,
           display_name: getProfileName(user, students, faculties),
+          status: resolveAccountStatus(user, profile),
           permissions: effectiveUserPermissions(loadedRolePermissions, loadedUserPermissions, userId, roleIds),
         };
       })
@@ -841,7 +1185,7 @@ function Admin() {
     setSidebarOpen(open);
   };
 
-  const createInternalUser = async (form, duplicateIndex = null) => {
+  const createInternalUser = async (form, duplicateIndex = null, uploadMeta = null) => {
     const validationError = validateUserForm(form);
     if (validationError) throw new Error(validationError);
 
@@ -850,7 +1194,7 @@ function Admin() {
     if (duplicateError) throw new Error(duplicateError);
 
     const user = await createProvisionedAuthUser(form.email.trim(), form.password);
-    await update(ref(database), buildUserUpdates(user, form));
+    await update(ref(database), buildUserUpdates(user, form, uploadMeta));
     addAccountToDuplicateIndex(index, form);
     return user;
   };
@@ -879,15 +1223,22 @@ function Admin() {
 
     try {
       const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data);
+      const workbook = XLSX.read(data, { cellStyles: true });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = getBatchRowsFromSheet(sheet);
+      const workbookPreview = buildWorkbookDocumentPreview(workbook, file.name);
       setBatchRows(rows);
+      setBatchWorkbookPreview(workbookPreview);
+      setSelectedBatchPreviewSheet(workbookPreview.sheets[0]?.name || '');
+      setShowBatchDocumentPreview(false);
       setBatchImportPlan(null);
       setBatchSuccessModal(null);
       setBatchResult(`${rows.length} row${rows.length === 1 ? '' : 's'} ready for review.`);
     } catch (error) {
       setBatchRows([]);
+      setBatchWorkbookPreview(null);
+      setSelectedBatchPreviewSheet('');
+      setShowBatchDocumentPreview(false);
       setBatchImportPlan(null);
       setBatchSuccessModal(null);
       setBatchResult(error.message || 'Unable to read the uploaded file.');
@@ -904,6 +1255,11 @@ function Admin() {
   };
 
   const handleBatchCreate = async () => {
+    if (!batchUploadContext.schoolYear.trim() || !batchUploadContext.term.trim()) {
+      setBatchResult('School Year and Term are required before importing batch accounts.');
+      return;
+    }
+
     setIsUploadingBatch(true);
     setBatchResult('');
     setBatchSuccessModal(null);
@@ -931,18 +1287,54 @@ function Admin() {
 
     try {
       const duplicateIndex = await fetchAccountDuplicateIndex();
+      const uploadId = sanitizeId(`account_upload_${batchUploadContext.schoolYear}_${batchUploadContext.term}_${Date.now()}`);
+      const importedAt = new Date().toISOString();
+      const hasActiveAccountUpload = Object.values(adminLiveData.account_uploads || {})
+        .some((upload) => (upload?.status || 'active') === 'active');
+      const uploadStatus = hasActiveAccountUpload ? 'inactive' : 'active';
+      const uploadMeta = {
+        uploadId,
+        schoolYear: batchUploadContext.schoolYear.trim(),
+        term: batchUploadContext.term.trim(),
+        importedAt,
+        importedBy: currentUser?.uid || '',
+        importedByName: currentUser?.name || currentUser?.username || 'Admin',
+        status: uploadStatus,
+      };
 
       for (const row of batchImportPlan.acceptedRows) {
         try {
-          await createInternalUser(row, duplicateIndex);
+          const user = await createInternalUser(row, duplicateIndex, uploadMeta);
+          await update(ref(database), {
+            [`account_upload_index/${uploadId}/${user.uid}`]: true,
+          });
           created += 1;
         } catch (error) {
           failed.push(`Row ${row.__rowNumber || '?'}: ${error.message}`);
         }
       }
 
+      await update(ref(database), {
+        [`account_uploads/${uploadId}`]: {
+          account_upload_id: uploadId,
+          school_year: uploadMeta.schoolYear,
+          term: uploadMeta.term,
+          uploaded_at: uploadMeta.importedAt,
+          uploaded_by: uploadMeta.importedBy,
+          uploaded_by_name: uploadMeta.importedByName,
+          created_count: created,
+          skipped_count: batchImportPlan.skippedRows.length,
+          failed_count: failed.length,
+          status: uploadStatus,
+        },
+      });
+
       const skippedSummary = formatBatchSkippedSummary(batchImportPlan.skippedRows);
-      setBatchResult(`Import finished. Created ${created} account${created === 1 ? '' : 's'}.`);
+      setBatchResult(
+        uploadStatus === 'active'
+          ? `Import finished. Created ${created} active account${created === 1 ? '' : 's'} and marked this upload active.`
+          : `Import finished. Created ${created} active account${created === 1 ? '' : 's'}. Upload group is inactive until you choose Set Active.`
+      );
       setBatchSuccessModal({
         created,
         skippedRows: batchImportPlan.skippedRows,
@@ -964,6 +1356,340 @@ function Admin() {
 
   const handleCloseBatchSuccess = () => {
     setBatchSuccessModal(null);
+  };
+
+  const buildAccountGroupStatusUpdates = (group, status, timestamp) => {
+    const students = adminLiveData.students || {};
+    const faculties = adminLiveData.faculties || {};
+    const updates = {};
+
+    [...group.userIds].forEach((userId) => {
+      const userRecord = Object.entries(adminLiveData.users || {}).find(([, user]) => user?.user_id === userId);
+      const userKey = userRecord?.[0] || userId;
+      const studentEntry = Object.entries(students).find(([, student]) => student?.user_id === userId);
+      const facultyEntry = Object.entries(faculties).find(([, faculty]) => faculty?.user_id === userId);
+      const timestampField = status === 'active' ? 'activated_at'
+        : status === 'archived' ? 'archived_at'
+          : 'deactivated_at';
+
+      updates[`users/${userKey}/status`] = status;
+      updates[`users/${userKey}/${timestampField}`] = timestamp;
+      if (studentEntry) {
+        updates[`students/${studentEntry[0]}/status`] = status;
+        updates[`students/${studentEntry[0]}/${timestampField}`] = timestamp;
+      }
+      if (facultyEntry) {
+        updates[`faculties/${facultyEntry[0]}/status`] = status;
+        updates[`faculties/${facultyEntry[0]}/${timestampField}`] = timestamp;
+      }
+
+      if (status === 'active') {
+        updates[`users/${userKey}/deactivated_at`] = null;
+        updates[`users/${userKey}/archived_at`] = null;
+        if (studentEntry) {
+          updates[`students/${studentEntry[0]}/deactivated_at`] = null;
+          updates[`students/${studentEntry[0]}/archived_at`] = null;
+        }
+        if (facultyEntry) {
+          updates[`faculties/${facultyEntry[0]}/deactivated_at`] = null;
+          updates[`faculties/${facultyEntry[0]}/archived_at`] = null;
+        }
+      }
+    });
+
+    return updates;
+  };
+
+  const handleAccountUploadAction = async (action, confirmed = false) => {
+    if (!selectedAccountUploadId) {
+      setBatchNoticeModal({
+        type: 'info',
+        title: 'Select an upload group',
+        message: 'Choose a School Year and Term account upload before applying an action.',
+      });
+      return;
+    }
+
+    const selectedGroup = manageableAccountUploadGroups.find((group) => group.uploadId === selectedAccountUploadId);
+    if (!selectedGroup) {
+      setBatchNoticeModal({
+        type: 'error',
+        title: 'Upload group not found',
+        message: 'The selected account upload group no longer exists. Refresh the page and try again.',
+      });
+      return;
+    }
+
+    const userIds = [...selectedGroup.userIds];
+    if (!userIds.length) {
+      setBatchNoticeModal({
+        type: 'info',
+        title: 'No linked users',
+        message: 'Selected upload has no linked user records.',
+      });
+      return;
+    }
+
+    const groupLabel = `${selectedGroup.schoolYear || 'Unknown SY'} ${selectedGroup.term || ''}`.trim();
+
+    if (!confirmed) {
+      const actionLabels = {
+        activate: {
+          title: 'Set Active Account Batch',
+          message: `Set ${groupLabel} as the active account batch and reactivate its ${userIds.length} linked account${userIds.length === 1 ? '' : 's'}? Other account batches will be marked inactive.`,
+          confirmText: 'Set Active',
+          tone: 'blue',
+        },
+        deactivate: {
+          title: 'Deactivate Accounts',
+          message: `Deactivate ${userIds.length} account record${userIds.length === 1 ? '' : 's'} from ${groupLabel}? These users will no longer be able to log in.`,
+          confirmText: 'Deactivate',
+          tone: 'amber',
+        },
+        archive: {
+          title: 'Archive Accounts',
+          message: `Archive ${userIds.length} account record${userIds.length === 1 ? '' : 's'} from ${groupLabel}? Archived accounts can be restored from View Archives.`,
+          confirmText: 'Archive',
+          tone: 'slate',
+        },
+        delete: {
+          title: 'Delete Accounts',
+          message: `Delete ${userIds.length} account record${userIds.length === 1 ? '' : 's'} from ${groupLabel}? This removes the database records for this upload.`,
+          confirmText: 'Delete',
+          tone: 'red',
+        },
+      };
+
+      setBatchActionModal({
+        action,
+        groupLabel,
+        count: userIds.length,
+        ...actionLabels[action],
+      });
+      return;
+    }
+
+    setBatchActionModal(null);
+
+    if (action === 'activate') {
+      const now = new Date().toISOString();
+      const updates = buildAccountGroupStatusUpdates(selectedGroup, 'active', now);
+      manageableAccountUploadGroups.forEach((group) => {
+        const nextStatus = group.uploadId === selectedAccountUploadId ? 'active' : 'inactive';
+        updates[`account_uploads/${group.uploadId}/status`] = nextStatus;
+        updates[`account_uploads/${group.uploadId}/updated_at`] = now;
+        updates[`account_uploads/${group.uploadId}/${nextStatus === 'active' ? 'activated_at' : 'deactivated_at'}`] = now;
+      });
+
+      await update(ref(database), updates);
+      setBatchResult(`${selectedGroup.schoolYear || 'Selected'} ${selectedGroup.term || ''} is now the active account batch.`);
+      setBatchNoticeModal({
+        type: 'success',
+        title: 'Account batch is active',
+        message: `${groupLabel} is now active and ${userIds.length} linked account${userIds.length === 1 ? '' : 's'} were reactivated.`,
+      });
+      await loadManagedUsers();
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const students = adminLiveData.students || {};
+    const faculties = adminLiveData.faculties || {};
+    const updates = {};
+
+    if (action === 'delete') {
+      userIds.forEach((userId) => {
+        const userRecord = Object.entries(adminLiveData.users || {}).find(([, user]) => user?.user_id === userId);
+        const userKey = userRecord?.[0] || userId;
+        const studentEntry = Object.entries(students).find(([, student]) => student?.user_id === userId);
+        const facultyEntry = Object.entries(faculties).find(([, faculty]) => faculty?.user_id === userId);
+        updates[`users/${userKey}`] = null;
+        if (studentEntry) updates[`students/${studentEntry[0]}`] = null;
+        if (facultyEntry) updates[`faculties/${facultyEntry[0]}`] = null;
+        updates[`account_upload_index/${selectedAccountUploadId}/${userId}`] = null;
+      });
+    } else {
+      const status = action === 'archive' ? 'archived' : 'inactive';
+      Object.assign(updates, buildAccountGroupStatusUpdates(selectedGroup, status, now));
+    }
+
+    updates[`account_uploads/${selectedAccountUploadId}/status`] = action === 'delete' ? 'deleted' : action === 'archive' ? 'archived' : 'inactive';
+    updates[`account_uploads/${selectedAccountUploadId}/updated_at`] = now;
+    if (action === 'delete') {
+      updates[`account_uploads/${selectedAccountUploadId}/deleted_at`] = now;
+    }
+
+    await update(ref(database), updates);
+    const pastTense = action === 'delete' ? 'deleted' : action === 'archive' ? 'archived' : 'deactivated';
+    setBatchResult(`${userIds.length} account record${userIds.length === 1 ? '' : 's'} ${pastTense}.`);
+    setBatchNoticeModal({
+      type: action === 'delete' ? 'warning' : 'success',
+      title: `Accounts ${pastTense}`,
+      message: action === 'delete'
+        ? `${userIds.length} database account record${userIds.length === 1 ? '' : 's'} from ${groupLabel} were deleted.`
+        : `${userIds.length} account record${userIds.length === 1 ? '' : 's'} from ${groupLabel} ${pastTense}.`,
+    });
+    await loadManagedUsers();
+  };
+
+  const handleRestoreArchivedAccountUpload = async (confirmed = false) => {
+    if (!selectedArchivedAccountUploadId) {
+      setBatchNoticeModal({
+        type: 'info',
+        title: 'Select an archive',
+        message: 'Select an archived account upload first.',
+      });
+      return;
+    }
+
+    const selectedGroup = selectedArchivedAccountUpload;
+    if (!selectedGroup) {
+      setBatchNoticeModal({
+        type: 'error',
+        title: 'Archive not found',
+        message: 'Selected archived account upload was not found.',
+      });
+      return;
+    }
+
+    if (!selectedGroup.userIds?.size || !accountArchiveViewerRows.length) {
+      setBatchNoticeModal({
+        type: 'info',
+        title: 'No archived rows',
+        message: 'This archive has no linked account records to restore.',
+      });
+      return;
+    }
+
+    const groupLabel = `${selectedGroup.schoolYear || 'Unknown SY'} ${selectedGroup.term || ''}`.trim();
+
+    if (!confirmed) {
+      setArchiveActionModal({
+        action: 'restore',
+        title: 'Restore Archived Upload',
+        message: `Restore ${selectedGroup.count} archived account record${selectedGroup.count === 1 ? '' : 's'} from ${groupLabel}? Restored accounts will stay inactive until you choose Set Active.`,
+        confirmText: 'Restore Upload',
+        tone: 'blue',
+        groupLabel,
+        count: selectedGroup.count,
+      });
+      return;
+    }
+
+    setArchiveActionModal(null);
+
+    const now = new Date().toISOString();
+    const updates = {
+      ...buildAccountGroupStatusUpdates(selectedGroup, 'inactive', now),
+      [`account_uploads/${selectedGroup.uploadId}/status`]: 'inactive',
+      [`account_uploads/${selectedGroup.uploadId}/restored_at`]: now,
+      [`account_uploads/${selectedGroup.uploadId}/updated_at`]: now,
+    };
+
+    await update(ref(database), updates);
+    setSelectedArchivedAccountUploadId('');
+    setBatchResult(`${selectedGroup.count} account record${selectedGroup.count === 1 ? '' : 's'} restored as inactive.`);
+    setBatchNoticeModal({
+      type: 'success',
+      title: 'Archive restored',
+      message: `${selectedGroup.count} account record${selectedGroup.count === 1 ? '' : 's'} from ${groupLabel} were restored as inactive.`,
+    });
+    await loadManagedUsers();
+  };
+
+  const handleOpenAccountArchiveViewer = () => {
+    if (!archivedAccountUploadGroups.length) {
+      setBatchResult('No archived account uploads found.');
+      return;
+    }
+
+    const initialUploadId = selectedArchivedAccountUploadId || archivedAccountUploadGroups[0].uploadId;
+    setSelectedArchivedAccountUploadId(initialUploadId);
+    setShowAccountArchiveViewer(true);
+  };
+
+  const handleDeleteArchivedAccountUpload = async (confirmed = false) => {
+    if (!selectedArchivedAccountUploadId) {
+      setBatchNoticeModal({
+        type: 'info',
+        title: 'Select an archive',
+        message: 'Select an archived account upload first.',
+      });
+      return;
+    }
+
+    const selectedGroup = selectedArchivedAccountUpload;
+    if (!selectedGroup) {
+      setBatchNoticeModal({
+        type: 'error',
+        title: 'Archive not found',
+        message: 'Selected archived account upload was not found.',
+      });
+      return;
+    }
+
+    if (!selectedGroup.userIds?.size || !accountArchiveViewerRows.length) {
+      setBatchNoticeModal({
+        type: 'info',
+        title: 'No archived rows',
+        message: 'This archive has no linked account records to delete.',
+      });
+      return;
+    }
+
+    const groupLabel = `${selectedGroup.schoolYear || 'Unknown SY'} ${selectedGroup.term || ''}`.trim();
+
+    if (!confirmed) {
+      setArchiveActionModal({
+        action: 'delete',
+        title: 'Delete Archived Upload',
+        message: `Permanently delete ${selectedGroup.count} archived database account record${selectedGroup.count === 1 ? '' : 's'} from ${groupLabel}?`,
+        confirmText: 'Delete Archive',
+        tone: 'red',
+        groupLabel,
+        count: selectedGroup.count,
+      });
+      return;
+    }
+
+    setArchiveActionModal(null);
+
+    const students = adminLiveData.students || {};
+    const faculties = adminLiveData.faculties || {};
+    const updates = {};
+    const userIds = [...selectedGroup.userIds];
+
+    userIds.forEach((userId) => {
+      const userRecord = Object.entries(adminLiveData.users || {}).find(([, user]) => user?.user_id === userId);
+      const userKey = userRecord?.[0] || userId;
+      const studentEntry = Object.entries(students).find(([, student]) => student?.user_id === userId);
+      const facultyEntry = Object.entries(faculties).find(([, faculty]) => faculty?.user_id === userId);
+      updates[`users/${userKey}`] = null;
+      if (studentEntry) updates[`students/${studentEntry[0]}`] = null;
+      if (facultyEntry) updates[`faculties/${facultyEntry[0]}`] = null;
+      updates[`account_upload_index/${selectedGroup.uploadId}/${userId}`] = null;
+    });
+
+    updates[`account_uploads/${selectedGroup.uploadId}/status`] = 'deleted';
+    updates[`account_uploads/${selectedGroup.uploadId}/deleted_at`] = new Date().toISOString();
+    updates[`account_uploads/${selectedGroup.uploadId}/updated_at`] = new Date().toISOString();
+
+    await update(ref(database), updates);
+    setBatchResult(`${selectedGroup.count} archived account record${selectedGroup.count === 1 ? '' : 's'} deleted.`);
+    setBatchNoticeModal({
+      type: 'success',
+      title: 'Archive deleted',
+      message: `${selectedGroup.count} archived database account record${selectedGroup.count === 1 ? '' : 's'} were deleted.`,
+    });
+
+    const remainingArchives = archivedAccountUploadGroups.filter((group) => group.uploadId !== selectedGroup.uploadId);
+    if (remainingArchives.length) {
+      setSelectedArchivedAccountUploadId(remainingArchives[0].uploadId);
+    } else {
+      setSelectedArchivedAccountUploadId('');
+      setShowAccountArchiveViewer(false);
+    }
+    await loadManagedUsers();
   };
 
   const handleUserRoleToggle = (userId, roleId) => {
@@ -1165,11 +1891,47 @@ function Admin() {
     const target = managedUsers.find((user) => user.user_id === userId);
     if (!target) return;
 
-    await update(ref(database), { [`${userRecordPath(target)}/status`]: status });
+    const now = new Date().toISOString();
+    const liveUserEntry = Object.entries(adminLiveData.users || {}).find(([key, user]) =>
+      key === userId || user?.user_id === userId
+    );
+    const userKey = liveUserEntry?.[0] || target.user_key || userId;
+    const timestampField = status === 'active' ? 'activated_at' : 'deactivated_at';
+    const updates = {
+      [`users/${userKey}/status`]: status,
+      [`users/${userKey}/${timestampField}`]: now,
+    };
+    const studentEntry = Object.entries(adminLiveData.students || {}).find(([, student]) => student?.user_id === userId);
+    const facultyEntry = Object.entries(adminLiveData.faculties || {}).find(([, faculty]) => faculty?.user_id === userId);
+
+    if (studentEntry) {
+      updates[`students/${studentEntry[0]}/status`] = status;
+      updates[`students/${studentEntry[0]}/${timestampField}`] = now;
+    }
+    if (facultyEntry) {
+      updates[`faculties/${facultyEntry[0]}/status`] = status;
+      updates[`faculties/${facultyEntry[0]}/${timestampField}`] = now;
+    }
+
+    if (status === 'active') {
+      updates[`users/${userKey}/deactivated_at`] = null;
+      updates[`users/${userKey}/archived_at`] = null;
+      if (studentEntry) {
+        updates[`students/${studentEntry[0]}/deactivated_at`] = null;
+        updates[`students/${studentEntry[0]}/archived_at`] = null;
+      }
+      if (facultyEntry) {
+        updates[`faculties/${facultyEntry[0]}/deactivated_at`] = null;
+        updates[`faculties/${facultyEntry[0]}/archived_at`] = null;
+      }
+    }
+
+    await update(ref(database), updates);
     setManagedUsers((current) => current.map((user) =>
       user.user_id === userId ? { ...user, status } : user
     ));
     setUserAdminMessage(status === 'inactive' ? 'Account deactivated.' : 'Account reactivated.');
+    await loadManagedUsers();
   };
 
   const handleResetSelectedUserPassword = async () => {
@@ -1308,24 +2070,36 @@ function Admin() {
         {liveMetrics.map((metric) => {
           const Icon = metric.icon;
           return (
-            <div key={metric.label} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div key={metric.label} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-500">{metric.label}</p>
-                  <p className="mt-2 text-3xl font-semibold text-slate-950">{metric.value}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{metric.label}</p>
+                  <p className="mt-3 text-4xl font-bold text-slate-950">{metric.value}</p>
                 </div>
-                <div className={`rounded-md p-3 ${metric.accent}`}>
+                <div className={`rounded-lg p-3 ${metric.accent}`}>
                   <Icon className="h-5 w-5" />
                 </div>
               </div>
-              <p className="mt-4 text-sm text-slate-500">{metric.detail}</p>
+              <div className="mt-5 flex items-center gap-2 border-t border-slate-100 pt-4">
+                <span className="h-2 w-2 rounded-full bg-blue-500" />
+                <p className="text-sm text-slate-600">{metric.detail}</p>
+              </div>
             </div>
           );
         })}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-        <SectionPanel title="Faculty Overview">
+      <div className="grid gap-6 xl:grid-cols-[1.45fr_0.75fr]">
+        <SectionPanel
+          title="Faculty Activity"
+          description="Live faculty location and class status from desktop logins."
+          action={
+            <button type="button" onClick={() => setActiveTab('reports')} className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <FaChartLine className="h-4 w-4 text-blue-600" />
+              View reports
+            </button>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead>
@@ -1338,8 +2112,8 @@ function Admin() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredFaculty.map((faculty) => (
-                  <tr key={faculty.name}>
+                {filteredFaculty.slice(0, 6).map((faculty) => (
+                  <tr key={faculty.name} className="hover:bg-slate-50">
                     <td className="py-3 pr-4 font-medium text-slate-950">{faculty.name}</td>
                     <td className="py-3 pr-4 text-slate-600">{faculty.department}</td>
                     <td className="py-3 pr-4 text-slate-600">{faculty.room}</td>
@@ -1355,26 +2129,145 @@ function Admin() {
               </tbody>
             </table>
           </div>
+          {filteredFaculty.length > 6 && (
+            <button type="button" onClick={() => setActiveTab('reports')} className="mt-4 text-sm font-semibold text-blue-600 hover:text-blue-700">
+              View {filteredFaculty.length - 6} more faculty records
+            </button>
+          )}
         </SectionPanel>
 
-        <SectionPanel title="Admin Workflows">
-          <div className="grid gap-3">
-            {[
-              ['Create account', 'accounts', FaUserPlus],
-              ['Manage roles', 'users', FaUserShield],
-              ['Upload users', 'batch', FaUpload],
-              ['Manage rooms', 'rooms', FaLayerGroup],
-            ].map(([label, tab, Icon]) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                <span>{label}</span>
-                <Icon className="h-4 w-4 text-slate-400" />
-              </button>
+        <div className="space-y-6">
+          <SectionPanel title="Admin Workflows" description="Common setup actions.">
+            <div className="grid gap-3">
+              {[
+                ['Create account', 'accounts', FaUserPlus, 'Internal signup'],
+                ['Manage roles', 'users', FaUserShield, 'Permissions'],
+                ['Upload users', 'batch', FaUpload, 'Batch accounts'],
+                ['Manage rooms', 'rooms', FaLayerGroup, 'Room status'],
+              ].map(([label, tab, Icon, detail]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-blue-200 hover:bg-blue-50"
+                >
+                  <span>
+                    <span className="block font-semibold text-slate-950">{label}</span>
+                    <span className="mt-0.5 block text-xs font-medium text-slate-500">{detail}</span>
+                  </span>
+                  <Icon className="h-4 w-4 text-blue-600" />
+                </button>
+              ))}
+            </div>
+          </SectionPanel>
+
+          <SectionPanel title="Room Snapshot">
+            <div className="space-y-3">
+              {roomRows.slice(0, 4).map((room) => (
+                <div key={room.room_id || room.room_name} className="flex items-center justify-between rounded-md border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">{room.room_name || room.room_id}</p>
+                    <p className="text-xs text-slate-500">{[room.building, room.floor].filter(Boolean).join(' - ') || 'No location details'}</p>
+                  </div>
+                  <StatusBadge status={room.room_status || 'Available'} />
+                </div>
+              ))}
+              {!roomRows.length && <p className="text-sm text-slate-500">No rooms saved yet.</p>}
+              {roomRows.length > 4 && (
+                <button type="button" onClick={() => setActiveTab('rooms')} className="text-sm font-semibold text-blue-600 hover:text-blue-700">
+                  Manage all {roomRows.length} rooms
+                </button>
+              )}
+            </div>
+          </SectionPanel>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {liveReportRows.map((report) => (
+          <button
+            key={report.name}
+            type="button"
+            onClick={() => setActiveTab('reports')}
+            className="rounded-lg border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-blue-200 hover:shadow-md"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{report.name}</p>
+                <p className="mt-3 text-sm font-semibold text-slate-950">{report.detail}</p>
+                <p className="mt-1 text-xs text-slate-500">{report.updated}</p>
+              </div>
+              <StatusBadge status={report.status} />
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-3">
+        <SectionPanel title="Frequently Tracked Faculty" description="Ranked by desktop login scans.">
+          <div className="space-y-3">
+            {dashboardInsights.frequentlyTrackedFaculty.map((faculty, index) => (
+              <div key={faculty.id} className="flex items-center justify-between gap-4 rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-sm font-bold text-white">{index + 1}</span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-950">{faculty.name}</p>
+                    <p className="truncate text-xs text-slate-500">{faculty.room}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-slate-950">{faculty.count}</p>
+                  <p className="text-xs text-slate-500">scan{faculty.count === 1 ? '' : 's'}</p>
+                </div>
+              </div>
             ))}
+            {!dashboardInsights.frequentlyTrackedFaculty.length && (
+              <p className="rounded-md bg-slate-50 px-3 py-4 text-sm text-slate-500">No faculty login scans recorded yet.</p>
+            )}
+          </div>
+        </SectionPanel>
+
+        <SectionPanel title="Frequently Used Rooms" description="Based on login session room assignments.">
+          <div className="space-y-3">
+            {dashboardInsights.frequentlyUsedRooms.map((room, index) => (
+              <div key={room.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">#{index + 1}</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-950">{room.name}</p>
+                    <p className="truncate text-xs text-slate-500">{room.floor}</p>
+                  </div>
+                  <StatusBadge status={room.status} />
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, room.count * 12)}%` }} />
+                </div>
+                <p className="mt-2 text-xs font-medium text-slate-500">{room.count} recorded use{room.count === 1 ? '' : 's'}</p>
+              </div>
+            ))}
+            {!dashboardInsights.frequentlyUsedRooms.length && (
+              <p className="rounded-md bg-slate-50 px-3 py-4 text-sm text-slate-500">Room usage will appear after faculty login sessions.</p>
+            )}
+          </div>
+        </SectionPanel>
+
+        <SectionPanel title="Maintenance Watch" description="Rooms under maintenance, ranked by prior usage.">
+          <div className="space-y-3">
+            {dashboardInsights.maintenanceRooms.map((room) => (
+              <div key={room.id} className="flex items-center justify-between gap-4 rounded-md border border-amber-100 bg-amber-50 px-3 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-950">{room.name}</p>
+                  <p className="truncate text-xs text-amber-700">{room.floor} - {room.count} prior use{room.count === 1 ? '' : 's'}</p>
+                </div>
+                <StatusBadge status={room.status} />
+              </div>
+            ))}
+            {!dashboardInsights.maintenanceRooms.length && (
+              <p className="rounded-md bg-emerald-50 px-3 py-4 text-sm font-medium text-emerald-700">No rooms are currently under maintenance.</p>
+            )}
+            <button type="button" onClick={() => setActiveTab('rooms')} className="text-sm font-semibold text-blue-600 hover:text-blue-700">
+              Update room statuses
+            </button>
           </div>
         </SectionPanel>
       </div>
@@ -1440,32 +2333,66 @@ function Admin() {
         </form>
       </SectionPanel>
 
-      <SectionPanel title="Faculty Directory">
+      <SectionPanel title={userForm.role === 'student' ? 'Student Directory' : 'Faculty Directory'}>
         <div className="mb-4 max-w-md">
           <div className="relative">
             <FaSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search faculty" className="w-full rounded-md border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={userForm.role === 'student' ? 'Search students' : 'Search faculty'} className="w-full rounded-md border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead>
-              <tr className="text-left text-xs font-semibold uppercase text-slate-500">
-                <th className="pb-3 pr-4">Faculty</th>
-                <th className="pb-3 pr-4">Department</th>
-                <th className="pb-3 pr-4">Current Room</th>
-                <th className="pb-3">Status</th>
-              </tr>
+              {userForm.role === 'student' ? (
+                <tr className="text-left text-xs font-semibold uppercase text-slate-500">
+                  <th className="pb-3 pr-4">Student</th>
+                  <th className="pb-3 pr-4">Student Number</th>
+                  <th className="pb-3 pr-4">Email</th>
+                  <th className="pb-3">Status</th>
+                </tr>
+              ) : (
+                <tr className="text-left text-xs font-semibold uppercase text-slate-500">
+                  <th className="pb-3 pr-4">Faculty</th>
+                  <th className="pb-3 pr-4">Department</th>
+                  <th className="pb-3 pr-4">Current Room</th>
+                  <th className="pb-3">Status</th>
+                </tr>
+              )}
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredFaculty.map((faculty) => (
-                <tr key={faculty.name}>
-                  <td className="py-3 pr-4 font-medium text-slate-950">{faculty.name}</td>
-                  <td className="py-3 pr-4 text-slate-600">{faculty.department}</td>
-                  <td className="py-3 pr-4 text-slate-600">{faculty.room}</td>
-                  <td className="py-3"><StatusBadge status={faculty.status} /></td>
-                </tr>
-              ))}
+              {userForm.role === 'student' ? (
+                <>
+                  {filteredStudents.map((student) => (
+                    <tr key={`${student.studentNumber}-${student.email}`}>
+                      <td className="py-3 pr-4 font-medium text-slate-950">{student.name}</td>
+                      <td className="py-3 pr-4 text-slate-600">{student.studentNumber}</td>
+                      <td className="py-3 pr-4 text-slate-600">{student.email}</td>
+                      <td className="py-3"><StatusBadge status={student.status} /></td>
+                    </tr>
+                  ))}
+                  {!filteredStudents.length && (
+                    <tr>
+                      <td className="py-6 text-sm text-slate-500" colSpan="4">No student records found.</td>
+                    </tr>
+                  )}
+                </>
+              ) : (
+                <>
+                  {filteredFaculty.map((faculty) => (
+                    <tr key={faculty.name}>
+                      <td className="py-3 pr-4 font-medium text-slate-950">{faculty.name}</td>
+                      <td className="py-3 pr-4 text-slate-600">{faculty.department}</td>
+                      <td className="py-3 pr-4 text-slate-600">{faculty.room}</td>
+                      <td className="py-3"><StatusBadge status={faculty.status} /></td>
+                    </tr>
+                  ))}
+                  {!filteredFaculty.length && (
+                    <tr>
+                      <td className="py-6 text-sm text-slate-500" colSpan="4">No faculty records found.</td>
+                    </tr>
+                  )}
+                </>
+              )}
             </tbody>
           </table>
         </div>
@@ -1691,11 +2618,52 @@ function Admin() {
   const renderBatch = () => (
     <div className="space-y-6">
       <SectionPanel title="Batch Upload" description="Upload .xlsx, .xls, or .csv files to create student and faculty accounts internally.">
+        <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ['Active batches', accountUploadStats.active, 'bg-emerald-50 text-emerald-700'],
+            ['Inactive batches', accountUploadStats.inactive, 'bg-amber-50 text-amber-700'],
+            ['Archived batches', accountUploadStats.archived, 'bg-slate-100 text-slate-700'],
+            ['Grouped accounts', accountUploadStats.totalAccounts, 'bg-blue-50 text-blue-700'],
+          ].map(([label, value, tone]) => (
+            <div key={label} className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+              <p className={`mt-2 inline-flex rounded-md px-2.5 py-1 text-xl font-bold ${tone}`}>{value}</p>
+            </div>
+          ))}
+        </div>
+
         <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6">
-            <FaFileUpload className="h-8 w-8 text-blue-600" />
-            <h3 className="mt-4 text-sm font-semibold text-slate-950">Upload account list</h3>
-            <p className="mt-2 text-sm text-slate-500">Required columns: {batchColumns.join(', ')}.</p>
+          <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/50 p-6">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-blue-600 p-3 text-white">
+                <FaFileUpload className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-950">Upload account list</h3>
+                <p className="mt-1 text-sm text-slate-500">Use the template to prevent missing columns and duplicate account data.</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-md border border-blue-100 bg-white px-3 py-2 text-xs leading-5 text-slate-500">
+              Required columns: <span className="font-semibold text-slate-700">{batchColumns.join(', ')}</span>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <Field label="School Year">
+                <input
+                  className={fieldClass()}
+                  value={batchUploadContext.schoolYear}
+                  onChange={(event) => setBatchUploadContext({ ...batchUploadContext, schoolYear: event.target.value })}
+                  placeholder="2026-2027"
+                />
+              </Field>
+              <Field label="Term">
+                <input
+                  className={fieldClass()}
+                  value={batchUploadContext.term}
+                  onChange={(event) => setBatchUploadContext({ ...batchUploadContext, term: event.target.value })}
+                  placeholder="1st Semester"
+                />
+              </Field>
+            </div>
             <button
               type="button"
               onClick={handleDownloadBatchTemplate}
@@ -1712,7 +2680,28 @@ function Admin() {
             </button>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="rounded-lg border border-slate-200 bg-white">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-950">File Preview</h3>
+                <p className="mt-1 text-xs text-slate-500">{batchRows.length ? `${batchRows.length} row${batchRows.length === 1 ? '' : 's'} loaded for validation` : 'Upload a file to review rows before import.'}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {batchRows.length > 0 && (
+                  <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">{batchRows.length} rows</span>
+                )}
+                <button
+                  type="button"
+                  disabled={!batchWorkbookPreview}
+                  onClick={() => setShowBatchDocumentPreview(true)}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FaEye className="h-3.5 w-3.5 text-blue-600" />
+                  Open File View
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto p-4">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead>
                 <tr className="text-left text-xs font-semibold uppercase text-slate-500">
@@ -1734,6 +2723,83 @@ function Admin() {
                 {!batchRows.length && (
                   <tr>
                     <td className="py-6 text-sm text-slate-500" colSpan="4">No file uploaded yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        </div>
+        <div className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-950">Uploaded account groups</h3>
+              <p className="mt-1 text-sm text-slate-500">Deactivate, archive, or delete accounts by School Year and Term.</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_auto_auto_auto_auto]">
+              <select
+                className={fieldClass()}
+                value={selectedAccountUploadId}
+                onChange={(event) => setSelectedAccountUploadId(event.target.value)}
+              >
+                <option value="">Select upload group</option>
+                {manageableAccountUploadGroups.map((group) => (
+                  <option key={group.uploadId} value={group.uploadId}>
+                    {group.schoolYear || 'Unknown SY'} - {group.term || 'Unknown Term'} - {group.count} account{group.count === 1 ? '' : 's'} - {group.status}
+                  </option>
+                ))}
+              </select>
+              <button type="button" disabled={!selectedAccountUploadId} onClick={() => handleAccountUploadAction('activate')} className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                Set Active
+              </button>
+              <button type="button" disabled={!selectedAccountUploadId} onClick={() => handleAccountUploadAction('deactivate')} className="rounded-md border border-amber-200 bg-white px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50">
+                Deactivate
+              </button>
+              <button type="button" disabled={!selectedAccountUploadId} onClick={() => handleAccountUploadAction('archive')} className="rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                Archive
+              </button>
+              <button type="button" disabled={!selectedAccountUploadId} onClick={() => handleAccountUploadAction('delete')} className="rounded-md border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">
+                Delete
+              </button>
+            </div>
+          </div>
+          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-950">Archived account uploads</h4>
+                <p className="mt-1 text-sm text-slate-500">Open archived account groups in a workbook-style preview before restoring or deleting.</p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button type="button" disabled={!archivedAccountUploadGroups.length} onClick={handleOpenAccountArchiveViewer} className="rounded-md border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+                  View Archives
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase text-slate-500">
+                  <th className="pb-3 pr-4">School Year</th>
+                  <th className="pb-3 pr-4">Term</th>
+                  <th className="pb-3 pr-4">Accounts</th>
+                  <th className="pb-3 pr-4">Status</th>
+                  <th className="pb-3">Uploaded</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {accountUploadGroups.slice(0, 8).map((group) => (
+                  <tr key={group.uploadId}>
+                    <td className="py-3 pr-4 font-medium text-slate-950">{group.schoolYear || 'Unknown'}</td>
+                    <td className="py-3 pr-4 text-slate-600">{group.term || 'Unknown'}</td>
+                    <td className="py-3 pr-4 text-slate-600">{group.count}</td>
+                    <td className="py-3 pr-4"><StatusBadge status={group.status || 'active'} /></td>
+                    <td className="py-3 text-slate-600">{group.uploadedAt ? new Date(group.uploadedAt).toLocaleString() : 'Unknown'}</td>
+                  </tr>
+                ))}
+                {!accountUploadGroups.length && (
+                  <tr>
+                    <td className="py-6 text-sm text-slate-500" colSpan="5">No grouped account uploads yet.</td>
                   </tr>
                 )}
               </tbody>
@@ -2065,6 +3131,65 @@ function Admin() {
           </div>
         </div>
       )}
+      {showBatchDocumentPreview && batchWorkbookPreview && (
+        <div className="fixed inset-0 z-[80] flex flex-col bg-slate-950/55 backdrop-blur-sm">
+          <div className="flex items-center justify-between border-b border-slate-300 bg-white px-5 py-3 shadow-sm">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">Workbook Preview</p>
+              <h2 className="mt-1 text-lg font-bold text-slate-950">{batchWorkbookPreview.fileName}</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedBatchPreviewSheet}
+                onChange={(event) => setSelectedBatchPreviewSheet(event.target.value)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm"
+              >
+                {batchWorkbookPreview.sheets.map((sheet) => (
+                  <option key={sheet.name} value={sheet.name}>{sheet.name}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => setShowBatchDocumentPreview(false)} className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                Close
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto bg-[#ededed] p-8">
+            <div className="mx-auto w-fit min-w-[52rem] border border-slate-400 bg-white p-10 shadow-2xl shadow-slate-900/20">
+              <div className="min-h-[70rem] w-fit min-w-[46rem] overflow-visible">
+                <table className="border-collapse font-[Calibri,Arial,sans-serif] text-[12px] text-slate-950">
+                  <colgroup>
+                    {(batchWorkbookPreview.sheets.find((sheet) => sheet.name === selectedBatchPreviewSheet)?.columnWidths || []).map((width, index) => (
+                      <col key={`${selectedBatchPreviewSheet}-col-${index}`} style={{ width: `${width}px` }} />
+                    ))}
+                  </colgroup>
+                  <tbody>
+                    {(batchWorkbookPreview.sheets.find((sheet) => sheet.name === selectedBatchPreviewSheet)?.rows || []).map((row) => (
+                      <tr key={`${selectedBatchPreviewSheet}-row-${row.index}`} style={{ height: `${row.height}px` }}>
+                        {row.cells.map((cell) => (
+                          <td
+                            key={cell.key}
+                            rowSpan={cell.rowSpan}
+                            colSpan={cell.colSpan}
+                            className="min-w-10 border border-slate-900 px-1.5 py-0.5 align-middle leading-tight"
+                            style={{
+                              minHeight: `${row.height}px`,
+                              ...cell.style,
+                            }}
+                            title={String(cell.value || '')}
+                          >
+                            {cell.value}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {batchSuccessModal && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-4">
           <div className="w-full max-w-xl rounded-lg border border-slate-200 bg-white shadow-2xl">
@@ -2116,6 +3241,199 @@ function Admin() {
               <button type="button" onClick={handleCloseBatchSuccess} className="rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
                 Done
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {batchActionModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start gap-4 px-6 py-5">
+              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
+                batchActionModal.tone === 'red' ? 'bg-red-50 text-red-600'
+                  : batchActionModal.tone === 'amber' ? 'bg-amber-50 text-amber-600'
+                    : batchActionModal.tone === 'slate' ? 'bg-slate-100 text-slate-600'
+                      : 'bg-blue-50 text-blue-600'
+              }`}>
+                {batchActionModal.tone === 'red' ? <FaTrash className="h-5 w-5" /> : <FaCheckCircle className="h-5 w-5" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-lg font-semibold text-slate-950">{batchActionModal.title}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{batchActionModal.message}</p>
+                <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  <span className="font-semibold text-slate-900">{batchActionModal.groupLabel}</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  {batchActionModal.count} linked account{batchActionModal.count === 1 ? '' : 's'}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setBatchActionModal(null)} className="rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAccountUploadAction(batchActionModal.action, true)}
+                className={`rounded-md px-4 py-2.5 text-sm font-semibold text-white ${
+                  batchActionModal.tone === 'red' ? 'bg-red-600 hover:bg-red-700'
+                    : batchActionModal.tone === 'amber' ? 'bg-amber-600 hover:bg-amber-700'
+                      : batchActionModal.tone === 'slate' ? 'bg-slate-700 hover:bg-slate-800'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {batchActionModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {archiveActionModal && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start gap-4 px-6 py-5">
+              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
+                archiveActionModal.tone === 'red' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'
+              }`}>
+                {archiveActionModal.tone === 'red' ? <FaTrash className="h-5 w-5" /> : <FaCheckCircle className="h-5 w-5" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-lg font-semibold text-slate-950">{archiveActionModal.title}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{archiveActionModal.message}</p>
+                <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  <span className="font-semibold text-slate-900">{archiveActionModal.groupLabel}</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  {archiveActionModal.count} archived account{archiveActionModal.count === 1 ? '' : 's'}
+                </div>
+                {archiveActionModal.action === 'delete' && (
+                  <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-700">
+                    This deletes the archived database records for this upload. This action cannot be restored afterward.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setArchiveActionModal(null)} className="rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (archiveActionModal.action === 'restore') {
+                    handleRestoreArchivedAccountUpload(true);
+                  } else {
+                    handleDeleteArchivedAccountUpload(true);
+                  }
+                }}
+                className={`rounded-md px-4 py-2.5 text-sm font-semibold text-white ${
+                  archiveActionModal.tone === 'red' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {archiveActionModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {batchNoticeModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white shadow-2xl">
+            <div className="px-6 py-5 text-center">
+              <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${
+                batchNoticeModal.type === 'error' ? 'bg-red-50 text-red-600'
+                  : batchNoticeModal.type === 'warning' ? 'bg-amber-50 text-amber-600'
+                    : batchNoticeModal.type === 'success' ? 'bg-emerald-50 text-emerald-600'
+                      : 'bg-blue-50 text-blue-600'
+              }`}>
+                {batchNoticeModal.type === 'error' || batchNoticeModal.type === 'warning'
+                  ? <FaTimes className="h-6 w-6" />
+                  : <FaCheckCircle className="h-6 w-6" />}
+              </div>
+              <p className="mt-4 text-lg font-semibold text-slate-950">{batchNoticeModal.title}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{batchNoticeModal.message}</p>
+            </div>
+            <div className="flex justify-center border-t border-slate-200 px-6 py-4">
+              <button type="button" onClick={() => setBatchNoticeModal(null)} className="rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showAccountArchiveViewer && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div className="flex h-[86vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">Archive Workbook</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-950">Archived Account Upload Preview</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => handleRestoreArchivedAccountUpload()} disabled={!canActOnSelectedArchive} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  Restore Upload
+                </button>
+                <button type="button" onClick={() => handleDeleteArchivedAccountUpload()} disabled={!canActOnSelectedArchive} className="rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50">
+                  Delete Archive
+                </button>
+                <button type="button" onClick={() => setShowAccountArchiveViewer(false)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 border-b border-slate-200 bg-white px-4 py-3 md:grid-cols-[minmax(260px,1fr)_auto] md:items-center">
+              <select
+                value={selectedArchivedAccountUploadId}
+                onChange={(event) => setSelectedArchivedAccountUploadId(event.target.value)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                {archivedAccountUploadGroups.map((group) => (
+                  <option key={group.uploadId} value={group.uploadId}>
+                    {group.schoolYear || 'Unknown SY'} - {group.term || 'Unknown Term'} - {group.count} account{group.count === 1 ? '' : 's'}
+                  </option>
+                ))}
+              </select>
+              <div className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
+                {accountArchiveViewerRows.length} row{accountArchiveViewerRows.length === 1 ? '' : 's'} loaded
+              </div>
+              {selectedArchivedAccountUploadId && !canActOnSelectedArchive && (
+                <div className="md:col-span-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                  This archive selection has no linked rows. Restore and delete are disabled until a valid archive is selected.
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-auto bg-slate-100 p-4">
+              <div className="min-w-[1120px] border border-slate-300 bg-white font-sans text-sm shadow-sm">
+                <div className="grid grid-cols-[44px_110px_150px_150px_150px_180px_290px_120px] bg-slate-200 text-center text-xs font-bold text-slate-700">
+                  {['', 'A', 'B', 'C', 'D', 'E', 'F', 'G'].map((letter) => (
+                    <div key={letter || 'corner'} className="border-r border-b border-slate-300 px-2 py-2">{letter}</div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-[44px_110px_150px_150px_150px_180px_290px_120px] bg-yellow-50 text-center font-bold text-slate-950">
+                  <div className="border-r border-b border-slate-300 bg-slate-100 px-2 py-2 text-xs text-slate-600">1</div>
+                  <div className="col-span-7 border-b border-slate-300 px-2 py-3">STI Locator Archived Account Upload</div>
+                </div>
+                <div className="grid grid-cols-[44px_110px_150px_150px_150px_180px_290px_120px] bg-blue-100 text-xs font-bold uppercase text-slate-900">
+                  {['2', 'Role', 'ID', 'First Name', 'Middle Name', 'Last Name', 'Email', 'Status'].map((header, index) => (
+                    <div key={header} className={`${index === 0 ? 'bg-slate-100 text-center text-slate-600' : ''} border-r border-b border-slate-300 px-2 py-2`}>
+                      {header}
+                    </div>
+                  ))}
+                </div>
+                {accountArchiveViewerRows.length ? (
+                  accountArchiveViewerRows.map((row, index) => (
+                    <div key={`${row.email}-${row.accountId}-${index}`} className="grid grid-cols-[44px_110px_150px_150px_150px_180px_290px_120px] bg-white text-slate-800 odd:bg-green-50/50">
+                      {[index + 3, row.role, row.accountId, row.firstName, row.middleName, row.lastName, row.email, row.status].map((cell, cellIndex) => (
+                        <div key={`${cellIndex}-${cell}`} className={`${cellIndex === 0 ? 'bg-slate-100 text-center text-xs font-semibold text-slate-600' : ''} min-h-9 truncate border-r border-b border-slate-300 px-2 py-2`} title={String(cell || '')}>
+                          {cell || ''}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-4 py-12 text-center text-sm font-semibold text-slate-500">No archived account rows found for this upload.</div>
+                )}
+              </div>
             </div>
           </div>
         </div>

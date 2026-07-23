@@ -168,7 +168,7 @@ const authenticateWithDatabasePassword = async (login, password) => {
     return null;
   }
 
-  if (userData.status === 'inactive') {
+  if (['inactive', 'archived', 'deleted'].includes(userData.status)) {
     throw new Error('inactive-account');
   }
 
@@ -319,8 +319,8 @@ function Login() {
       if (snapshot.exists()) {
         const userData = snapshot.val();
 
-        if (userData.status === 'inactive') {
-          setError('Your account is deactivated. Please contact the administrator.');
+        if (['inactive', 'archived', 'deleted'].includes(userData.status)) {
+          setError('Your account is deactivated or archived. Please contact the administrator.');
           setIsLoading(false);
           return;
         }
