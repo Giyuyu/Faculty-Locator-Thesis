@@ -1,3 +1,5 @@
+/* global process */
+
 import { chromium } from 'playwright-core';
 
 const baseUrl = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:5178';
@@ -15,7 +17,7 @@ async function waitForText(page, expected, timeout = 15000) {
       expected,
       { timeout },
     );
-  } catch (error) {
+  } catch {
     const snapshot = (await page.locator('body').innerText().catch(() => ''))
       .replace(/\s+/g, ' ')
       .slice(0, 900);
@@ -52,6 +54,17 @@ async function assertPage(page, path, expectedTexts, rejectedTexts = []) {
   }
 }
 
+async function changePassword(page, currentPassword, newPassword) {
+  await page.goto(`${baseUrl}/profile`, { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: /^change password$/i }).click();
+  await page.locator('#current-password').fill(currentPassword);
+  await page.locator('#new-password').fill(newPassword);
+  await page.locator('#confirm-password').fill(newPassword);
+  await page.getByRole('button', { name: /^save password$/i }).click();
+  await page.getByRole('heading', { name: 'Saved' }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: /^ok$/i }).click();
+}
+
 async function main() {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
@@ -60,6 +73,10 @@ async function main() {
     await assertPage(faculty.page, '/room-tracker', ['Local Room 101', 'Local Faculty', 'Occupied']);
     await assertPage(faculty.page, '/faculty-schedules', ['Automation Systems', 'Scheduled Room 202', 'SMOKE-01']);
     console.log('PASS Faculty: live status, room override, subject, and own schedule');
+
+    await changePassword(faculty.page, 'Faculty@12345', 'Faculty@54321');
+    await changePassword(faculty.page, 'Faculty@54321', 'Faculty@12345');
+    console.log('PASS Account security: password changes in Auth and can be changed back');
     await faculty.context.close();
 
     const student = await login(browser, 'student.local@sti.edu', 'Student@12345');

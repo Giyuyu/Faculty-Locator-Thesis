@@ -1964,13 +1964,186 @@ class NotificationButton extends StatefulWidget {
   State<NotificationButton> createState() => _NotificationButtonState();
 }
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key, required this.user});
 
   final AppUser user;
 
   @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  bool _changingPassword = false;
+
+  Future<MapEntry<String, Map<String, dynamic>>?> _findUserRecord() async {
+    final snapshot = await locatorDatabase.ref('users').get();
+    final users = asMap(snapshot.value);
+    for (final entry in users.entries) {
+      final record = asStringMap(entry.value);
+      if (entry.key.toString() == widget.user.uid ||
+          firstText(record, ['user_id', 'uid']) == widget.user.uid) {
+        return MapEntry(entry.key.toString(), record);
+      }
+    }
+    return null;
+  }
+
+  Future<void> _changePassword() async {
+    final currentController = TextEditingController();
+    final nextController = TextEditingController();
+    final confirmController = TextEditingController();
+    String? validationMessage;
+
+    final values = await showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Change password'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: currentController,
+                  obscureText: true,
+                  autofillHints: const [AutofillHints.password],
+                  decoration: const InputDecoration(
+                    labelText: 'Current password',
+                    prefixIcon: Icon(Icons.lock_outline_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nextController,
+                  obscureText: true,
+                  autofillHints: const [AutofillHints.newPassword],
+                  decoration: const InputDecoration(
+                    labelText: 'New password',
+                    prefixIcon: Icon(Icons.key_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmController,
+                  obscureText: true,
+                  autofillHints: const [AutofillHints.newPassword],
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm new password',
+                    prefixIcon: Icon(Icons.verified_user_outlined),
+                  ),
+                ),
+                if (validationMessage != null) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      validationMessage!,
+                      style: const TextStyle(color: Palette.danger, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final currentPassword = currentController.text;
+                final newPassword = nextController.text;
+                final confirmPassword = confirmController.text;
+                String? message;
+                if (currentPassword.isEmpty) {
+                  message = 'Enter your current password.';
+                } else if (newPassword.length < 8) {
+                  message = 'Password must be at least 8 characters.';
+                } else if (newPassword != confirmPassword) {
+                  message = 'Passwords do not match.';
+                } else if (newPassword == currentPassword) {
+                  message = 'Use a password different from your current password.';
+                }
+                if (message != null) {
+                  setDialogState(() => validationMessage = message);
+                  return;
+                }
+                Navigator.of(dialogContext).pop([currentPassword, newPassword]);
+              },
+              child: const Text('Save password'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    currentController.dispose();
+    nextController.dispose();
+    confirmController.dispose();
+    if (values == null || !mounted) return;
+
+    setState(() => _changingPassword = true);
+    try {
+      final record = await _findUserRecord();
+      if (record == null) throw Exception('Your user record could not be found.');
+
+      final authUser = locatorAuth.currentUser;
+      if (authUser != null) {
+        final email = authUser.email ?? widget.user.username;
+        final credential = EmailAuthProvider.credential(
+          email: email,
+          password: values[0],
+        );
+        await authUser.reauthenticateWithCredential(credential);
+        await authUser.updatePassword(values[1]);
+      } else {
+        final storedPassword = str(record.value['password']);
+        if (storedPassword.isEmpty || storedPassword == 'managed_by_firebase_auth') {
+          throw Exception('Sign out and sign in again before changing your password.');
+        }
+        if (storedPassword != values[0]) {
+          throw FirebaseAuthException(
+            code: 'wrong-password',
+            message: 'Your current password is incorrect.',
+          );
+        }
+      }
+
+      await locatorDatabase.ref('users/${record.key}').update({
+        'password': authUser == null ? values[1] : 'managed_by_firebase_auth',
+        'password_updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password updated successfully.')),
+      );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      final message = switch (error.code) {
+        'invalid-credential' || 'wrong-password' =>
+          'Your current password is incorrect.',
+        'weak-password' => 'Use a stronger password with at least 8 characters.',
+        'too-many-requests' => 'Too many attempts. Wait a moment, then try again.',
+        'network-request-failed' => 'Check your internet connection and try again.',
+        _ => error.message ?? 'Password update failed.',
+      };
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _changingPassword = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final user = widget.user;
     return Scaffold(
       appBar: AppBar(title: const Text('My Profile')),
       body: ListView(
@@ -2045,6 +2218,19 @@ class ProfileScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: _changingPassword ? null : _changePassword,
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+            icon: _changingPassword
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.key_rounded),
+            label: Text(_changingPassword ? 'Updating password...' : 'Change password'),
+          ),
+          const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: () => returnToLogin(context),
             style: OutlinedButton.styleFrom(

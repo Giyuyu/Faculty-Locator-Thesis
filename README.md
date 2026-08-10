@@ -65,6 +65,35 @@ Use the `\.\` prefix for every launcher shown in this guide. Command Prompt (`cm
 
 Running `\.\run.bat` without an option opens an interactive menu. The individual launchers are organized inside the `launchers\` folder.
 
+## All Launcher Differences
+
+| Command | Application and target | Data environment | When to use it |
+| --- | --- | --- | --- |
+| `.\run.bat` | Interactive launcher menu | You choose | Use when you want to select a command from a numbered list. |
+| `.\run.bat local-db` | Firebase Auth and Realtime Database emulators | Local | Start this first and keep it open before running any `-local` client. |
+| `.\run.bat web-local` | React web app in the default browser | Local | Web development without changing staging or production data. |
+| `.\run.bat web-stg` | React web app in the default browser | Staging (`fac-loc-stg`) | Test web changes against staging data. |
+| `.\run.bat web-prod` | React web app in the default browser | Production (`fac-loc`) | Run the web app locally against live production data. |
+| `.\run.bat login-local` | Python faculty RFID login desktop app | Local | Test desktop login, schedules, rooms, and faculty status locally. |
+| `.\run.bat login-stg` | Python faculty RFID login desktop app | Staging (`fac-loc-stg`) | Test room login and RFID behavior using staging data. |
+| `.\run.bat login` | Python faculty RFID login desktop app | Production (`fac-loc`) | Run the faculty room-login station with live data. |
+| `.\run.bat admin-local` | Python desktop administration app | Local | Test room/device assignment and RFID registration locally. |
+| `.\run.bat admin-stg` | Python desktop administration app | Staging (`fac-loc-stg`) | Configure and test desktop records in staging. |
+| `.\run.bat admin` | Python desktop administration app | Production (`fac-loc`) | Configure production room devices and faculty RFID cards. |
+| `.\run.bat mobile-web-local` | Flutter mobile app in Chrome | Local | Test the mobile UI in a browser using local emulators. |
+| `.\run.bat mobile-web-stg` | Flutter mobile app in Chrome | Staging (`fac-loc-stg`) | Test the mobile UI in Chrome using staging data. |
+| `.\run.bat mobile-web` | Flutter mobile app in Chrome | Production (`fac-loc`) | Inspect the mobile UI in Chrome using live data. |
+| `.\run.bat mobile-local` | Flutter app on Android/iOS or an emulator | Local | Test the device app against local emulators. |
+| `.\run.bat mobile-stg` | Flutter app on Android/iOS or an emulator | Staging (`fac-loc-stg`) | Test the device app safely before release. |
+| `.\run.bat mobile-prod` | Flutter app on Android/iOS or an emulator | Production (`fac-loc`) | Run the device app using live production data. |
+
+Environment naming is consistent across launchers:
+
+- `-local` uses the Firebase emulators and requires `.\run.bat local-db`.
+- `-stg` uses the separate staging Firebase project.
+- Production commands use either `-prod` or no suffix (`login`, `admin`, and `mobile-web`).
+- `mobile-web...` runs Flutter in Chrome; other `mobile...` commands run on a device or emulator.
+
 ## Recommended Local Development
 
 Use the Firebase Emulator Suite for routine development. It gives the web,
@@ -166,6 +195,9 @@ The first time a desktop is configured, its local room and RFID settings are sav
 
 ## Run the Flutter Mobile Application
 
+The complete target and environment comparison is listed in
+**All Launcher Differences** above.
+
 ### Test in Chrome
 
 Production:
@@ -201,6 +233,13 @@ To select a specific device:
 ```powershell
 flutter devices
 .\run.bat mobile-stg -d emulator-5554
+```
+
+For `mobile-local`, an Android emulator reaches the computer through `10.0.2.2`
+automatically. A physical phone must use the computer's LAN IP:
+
+```powershell
+.\run.bat mobile-local -d DEVICE_ID --dart-define=LOCAL_FIREBASE_HOST=192.168.1.10
 ```
 
 The staging app displays an `STG` badge beside the STI Locator name.

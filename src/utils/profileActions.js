@@ -1,6 +1,12 @@
 import Swal from 'sweetalert2';
-import { getAuth, signOut, updatePassword } from 'firebase/auth';
-import { ref, update } from 'firebase/database';
+import {
+  EmailAuthProvider,
+  getAuth,
+  reauthenticateWithCredential,
+  signOut,
+  updatePassword,
+} from 'firebase/auth';
+import { get, ref, update } from 'firebase/database';
 
 const applyTheme = (theme) => {
   const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
@@ -25,10 +31,47 @@ export const showUserProfile = (_currentUser, navigate) => {
   window.location.assign('/profile');
 };
 
+const findUserRecord = async (database, currentUser) => {
+  const userId = currentUser?.uid || currentUser?.user_id || currentUser?.id;
+  if (!userId) return null;
+
+  const directSnapshot = await get(ref(database, `users/${userId}`));
+  if (directSnapshot.exists()) {
+    return { key: userId, value: directSnapshot.val() || {} };
+  }
+
+  const usersSnapshot = await get(ref(database, 'users'));
+  if (!usersSnapshot.exists()) return null;
+
+  const match = Object.entries(usersSnapshot.val()).find(([key, value]) => {
+    const record = value || {};
+    return key === userId || record.user_id === userId || record.uid === userId;
+  });
+
+  return match ? { key: match[0], value: match[1] || {} } : null;
+};
+
+const passwordErrorMessage = (error) => {
+  if (['auth/invalid-credential', 'auth/wrong-password'].includes(error?.code)) {
+    return 'Your current password is incorrect.';
+  }
+  if (error?.code === 'auth/weak-password') {
+    return 'Use a stronger password with at least 8 characters.';
+  }
+  if (error?.code === 'auth/too-many-requests') {
+    return 'Too many attempts. Wait a moment, then try again.';
+  }
+  if (error?.code === 'auth/network-request-failed') {
+    return 'Check your internet connection and try again.';
+  }
+  return error?.message || 'Password update failed.';
+};
+
 export const changeCurrentUserPassword = async (database, currentUser) => {
   const result = await Swal.fire({
     title: 'Change password',
     html: `
+      <input id="current-password" type="password" class="swal2-input" placeholder="Current password" autocomplete="current-password">
       <input id="new-password" type="password" class="swal2-input" placeholder="New password">
       <input id="confirm-password" type="password" class="swal2-input" placeholder="Confirm password">
     `,
@@ -36,17 +79,26 @@ export const changeCurrentUserPassword = async (database, currentUser) => {
     showCancelButton: true,
     confirmButtonText: 'Save password',
     preConfirm: () => {
+      const currentPassword = document.getElementById('current-password')?.value || '';
       const password = document.getElementById('new-password')?.value || '';
       const confirmPassword = document.getElementById('confirm-password')?.value || '';
-      if (password.length < 6) {
-        Swal.showValidationMessage('Password must be at least 6 characters.');
+      if (!currentPassword) {
+        Swal.showValidationMessage('Enter your current password.');
+        return false;
+      }
+      if (password.length < 8) {
+        Swal.showValidationMessage('Password must be at least 8 characters.');
         return false;
       }
       if (password !== confirmPassword) {
         Swal.showValidationMessage('Passwords do not match.');
         return false;
       }
-      return password;
+      if (password === currentPassword) {
+        Swal.showValidationMessage('New password must be different from your current password.');
+        return false;
+      }
+      return { currentPassword, newPassword: password };
     },
   });
 
@@ -54,26 +106,43 @@ export const changeCurrentUserPassword = async (database, currentUser) => {
 
   const userId = currentUser?.uid || currentUser?.user_id || currentUser?.id;
   const authUser = getAuth().currentUser;
-  if (!userId || !authUser) {
-    Swal.fire('Unable to update', 'Please log in again before changing your password.', 'error');
+  if (!userId) {
+    Swal.fire('Unable to update', 'Your user record is missing. Please sign in again.', 'error');
     return;
   }
 
   try {
-    await updatePassword(authUser, result.value);
-  } catch (error) {
-    if (error.code === 'auth/requires-recent-login') {
-      Swal.fire('Login required', 'Please sign out, sign back in, then change your password.', 'warning');
-      return;
+    const userRecord = await findUserRecord(database, currentUser);
+    if (!userRecord) throw new Error('Your user record could not be found.');
+
+    if (authUser) {
+      const email = authUser.email || currentUser?.email || currentUser?.username;
+      if (!email) throw new Error('Your account email could not be found.');
+      const credential = EmailAuthProvider.credential(email, result.value.currentPassword);
+      await reauthenticateWithCredential(authUser, credential);
+      await updatePassword(authUser, result.value.newPassword);
+    } else {
+      const storedPassword = String(userRecord.value.password || '');
+      if (!storedPassword || storedPassword === 'managed_by_firebase_auth') {
+        throw new Error('Please sign out and sign in again before changing your password.');
+      }
+      if (storedPassword !== result.value.currentPassword) {
+        const error = new Error('Your current password is incorrect.');
+        error.code = 'auth/wrong-password';
+        throw error;
+      }
     }
-    Swal.fire('Unable to update', error.message || 'Password update failed.', 'error');
+
+    await update(ref(database), {
+      [`users/${userRecord.key}/password`]: authUser
+        ? 'managed_by_firebase_auth'
+        : result.value.newPassword,
+      [`users/${userRecord.key}/password_updated_at`]: new Date().toISOString(),
+    });
+  } catch (error) {
+    Swal.fire('Unable to update', passwordErrorMessage(error), 'error');
     return;
   }
-
-  await update(ref(database), {
-    [`users/${userId}/password`]: 'managed_by_firebase_auth',
-    [`users/${userId}/password_updated_at`]: new Date().toISOString(),
-  });
 
   Swal.fire('Saved', 'Password updated successfully.', 'success');
 };
