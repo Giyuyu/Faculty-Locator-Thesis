@@ -1,0 +1,12 @@
+# Vercel deploys only the React/Vite web client.
+Mobile App/
+desktop_app/
+docs/
+launchers/
+data/
+logs/
+.venv/
+.firebase/
+*.bat
+*.xlsx
+database-debug.log
