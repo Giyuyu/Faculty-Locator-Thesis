@@ -6,6 +6,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import {
   FaBars,
+  FaBook,
   FaBuilding,
   FaCalendarAlt,
   FaChartLine,
@@ -35,6 +36,8 @@ import {
 import { MdApps } from 'react-icons/md';
 import { database, firebaseConfig } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
+import ProfileLink from '../../components/ProfileLink';
+import QuickStartGuide, { ADMIN_GUIDE_STEPS } from '../../components/QuickStartGuide';
 import logo from '../../assets/sti_logo.png';
 import {
   changeCurrentUserPassword,
@@ -708,7 +711,7 @@ function Admin() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem('moduleSidebarOpen') === 'true');
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [adminLiveData, setAdminLiveData] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -764,6 +767,19 @@ function Admin() {
       setCurrentUser(currentUser);
     }
   }, [navigate]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const guideKey = 'quickStartSeen:admin';
+    if (localStorage.getItem(guideKey) !== 'true') {
+      setQuickGuideOpen(true);
+      localStorage.setItem(guideKey, 'true');
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (quickGuideOpen && !sidebarOpen) setSidebarPreference(true);
+  }, [quickGuideOpen, sidebarOpen]);
 
   useEffect(() => {
     const unsubscribe = onValue(ref(database), (snapshot) => {
@@ -1183,6 +1199,11 @@ function Admin() {
   const setSidebarPreference = (open) => {
     localStorage.setItem('moduleSidebarOpen', String(open));
     setSidebarOpen(open);
+  };
+
+  const closeQuickGuide = () => {
+    localStorage.setItem('quickStartSeen:admin', 'true');
+    setQuickGuideOpen(false);
   };
 
   const createInternalUser = async (form, duplicateIndex = null, uploadMeta = null) => {
@@ -2050,6 +2071,7 @@ function Admin() {
             key={item.id}
             type="button"
             onClick={() => setActiveTab(item.id)}
+            data-tour={`admin-nav-${item.id}`}
             className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
               active
                 ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg'
@@ -2065,7 +2087,7 @@ function Admin() {
   );
 
   const renderDashboard = () => (
-    <div className="space-y-6">
+    <div className="space-y-6" data-tour="admin-dashboard">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {liveMetrics.map((metric) => {
           const Icon = metric.icon;
@@ -2275,7 +2297,7 @@ function Admin() {
   );
 
   const renderAccounts = () => (
-    <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+    <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]" data-tour="admin-accounts">
       <SectionPanel title="Internal Signup" description="Create student and faculty accounts from the admin console.">
         <form className="space-y-4" onSubmit={handleCreateUser}>
           <Field label="Account Type">
@@ -2401,7 +2423,7 @@ function Admin() {
   );
 
   const renderUsers = () => (
-    <div className="space-y-6">
+    <div className="space-y-6" data-tour="admin-users">
       <SectionPanel
         title="Role Permissions"
         description="Assign permissions to each role. Users inherit permissions through their selected role."
@@ -2616,7 +2638,7 @@ function Admin() {
   );
 
   const renderBatch = () => (
-    <div className="space-y-6">
+    <div className="space-y-6" data-tour="admin-batch">
       <SectionPanel title="Batch Upload" description="Upload .xlsx, .xls, or .csv files to create student and faculty accounts internally.">
         <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -2811,7 +2833,7 @@ function Admin() {
   );
 
   const renderRooms = () => (
-    <div className="space-y-6">
+    <div className="space-y-6" data-tour="admin-rooms">
       <div className="grid gap-6 xl:grid-cols-2">
         <SectionPanel title="Manage Floors">
           <form className="grid gap-4 sm:grid-cols-2" onSubmit={handleSaveFloor}>
@@ -2958,36 +2980,38 @@ function Admin() {
   );
 
   const renderReports = () => (
-    <SectionPanel title="Reports">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead>
-            <tr className="text-left text-xs font-semibold uppercase text-slate-500">
-              <th className="pb-3 pr-4">Report</th>
-              <th className="pb-3 pr-4">Owner</th>
-              <th className="pb-3 pr-4">Updated</th>
-              <th className="pb-3 pr-4">Status</th>
-              <th className="pb-3">Details</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {liveReportRows.map((report) => (
-              <tr key={report.name}>
-                <td className="py-3 pr-4 font-medium text-slate-950">{report.name}</td>
-                <td className="py-3 pr-4 text-slate-600">{report.owner}</td>
-                <td className="py-3 pr-4 text-slate-600">{report.updated}</td>
-                <td className="py-3 pr-4"><StatusBadge status={report.status} /></td>
-                <td className="py-3 text-slate-600">{report.detail}</td>
+    <div data-tour="admin-reports">
+      <SectionPanel title="Reports">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead>
+              <tr className="text-left text-xs font-semibold uppercase text-slate-500">
+                <th className="pb-3 pr-4">Report</th>
+                <th className="pb-3 pr-4">Owner</th>
+                <th className="pb-3 pr-4">Updated</th>
+                <th className="pb-3 pr-4">Status</th>
+                <th className="pb-3">Details</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionPanel>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {liveReportRows.map((report) => (
+                <tr key={report.name}>
+                  <td className="py-3 pr-4 font-medium text-slate-950">{report.name}</td>
+                  <td className="py-3 pr-4 text-slate-600">{report.owner}</td>
+                  <td className="py-3 pr-4 text-slate-600">{report.updated}</td>
+                  <td className="py-3 pr-4"><StatusBadge status={report.status} /></td>
+                  <td className="py-3 text-slate-600">{report.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionPanel>
+    </div>
   );
 
   const renderSettings = () => (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid gap-6 lg:grid-cols-2" data-tour="admin-settings">
       <SectionPanel title="Access Control">
         <div className="space-y-4">
           {[
@@ -3438,7 +3462,7 @@ function Admin() {
           </div>
         </div>
       )}
-      <aside className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${sidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
+      <aside data-tour="module-sidebar" className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${sidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
         <div className={`relative h-full w-72 px-4 py-5 transition-opacity duration-200 ease-in-out ${sidebarOpen ? 'opacity-100 delay-100' : 'pointer-events-none opacity-0'}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -3458,7 +3482,7 @@ function Admin() {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm">
+        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm" data-tour="module-navbar">
           <div className="flex h-14 w-full items-center justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <button
@@ -3475,36 +3499,34 @@ function Admin() {
             </div>
 
             <div className="flex shrink-0 items-center gap-4 text-slate-600">
-              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules">
+              <button
+                type="button"
+                onClick={() => setQuickGuideOpen(true)}
+                className="rounded-md p-2 text-slate-600 hover:bg-slate-100"
+                aria-label="Open admin guide"
+                title="Quick start guide"
+                data-tour="guide"
+              >
+                <FaBook className="h-4 w-4" />
+              </button>
+              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules" data-tour="module-switcher">
                 <MdApps className="h-5 w-5" />
               </Link>
-              <NotificationBell database={database} />
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setProfileOpen((open) => !open)}
-                  className="flex items-center gap-2"
-                  aria-expanded={profileOpen}
-                  aria-haspopup="menu"
-                >
-                  <FaUserCircle className="h-9 w-9 text-slate-300" />
-                  <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 md:inline">{currentUser?.name || currentUser?.username || 'User'}</span>
-                  <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {profileOpen && (
-                  <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                    <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
-                    <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Change password</button>
-                    <div className="my-2 border-t border-slate-200" />
-                    <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
-                    <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Sign out</button>
-                  </div>
-                )}
+              <div data-tour="notifications">
+                <NotificationBell database={database} audience="admin" />
               </div>
+              <div data-tour="profile"><ProfileLink user={currentUser} /></div>
             </div>
           </div>
         </header>
+
+        <QuickStartGuide
+          open={quickGuideOpen}
+          onClose={closeQuickGuide}
+          user={currentUser}
+          steps={ADMIN_GUIDE_STEPS}
+          onSelectTab={setActiveTab}
+        />
 
         <main className="px-4 py-6 sm:px-6 lg:px-8">
           <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

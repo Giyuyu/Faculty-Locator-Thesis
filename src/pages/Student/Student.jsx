@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MdApps, MdClose, MdPeople, MdSchool } from 'react-icons/md';
-import { FaChevronDown, FaUserCircle } from 'react-icons/fa';
+import { FaBook, FaChevronDown, FaUserCircle } from 'react-icons/fa';
 import { onValue, ref } from 'firebase/database';
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
+import ProfileLink from '../../components/ProfileLink';
+import QuickStartGuide, { STUDENT_GUIDE_STEPS } from '../../components/QuickStartGuide';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData, getReflectableSchedules } from '../../utils/trackerData';
 import {
@@ -25,7 +27,7 @@ function Student() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('All');
   const [currentUser, setCurrentUser] = useState(null);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [facultyLocations, setFacultyLocations] = useState([]);
   const [scheduleRows, setScheduleRows] = useState([]);
   const [selectedFaculty, setSelectedFaculty] = useState(null);
@@ -48,6 +50,15 @@ function Student() {
 
     setCurrentUser(parsedUser);
   }, [navigate]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const guideKey = 'quickStartSeen:student';
+    if (localStorage.getItem(guideKey) !== 'true') {
+      setQuickGuideOpen(true);
+      localStorage.setItem(guideKey, 'true');
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     const unsubscribe = onValue(ref(database), (snapshot) => {
@@ -126,9 +137,14 @@ function Student() {
     signOutCurrentUser(navigate);
   };
 
+  const closeQuickGuide = () => {
+    localStorage.setItem('quickStartSeen:student', 'true');
+    setQuickGuideOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 pt-14 text-slate-950">
-        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm">
+        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm" data-tour="module-navbar">
           <div className="flex h-14 w-full items-center justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <div className="h-9 w-9 shrink-0" aria-hidden="true" />
@@ -139,41 +155,36 @@ function Student() {
             </div>
 
             <div className="flex shrink-0 items-center gap-4 text-slate-600">
-              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules">
+              <button
+                type="button"
+                onClick={() => setQuickGuideOpen(true)}
+                className="rounded-md p-2 text-slate-600 hover:bg-slate-100"
+                aria-label="Open student guide"
+                title="Quick start guide"
+                data-tour="guide"
+              >
+                <FaBook className="h-4 w-4" />
+              </button>
+              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules" data-tour="module-switcher">
                 <MdApps className="h-5 w-5" />
               </Link>
-              <NotificationBell database={database} audience="student" />
-              {currentUser && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setProfileOpen((open) => !open)}
-                    className="flex items-center gap-2"
-                    aria-expanded={profileOpen}
-                    aria-haspopup="menu"
-                  >
-                    <FaUserCircle className="h-9 w-9 text-slate-300" />
-                    <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 md:inline">{currentUser.name}</span>
-                    <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {profileOpen && (
-                    <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                      <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
-                      <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Change password</button>
-                      <div className="my-2 border-t border-slate-200" />
-                      <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
-                      <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Sign out</button>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div data-tour="notifications">
+                <NotificationBell database={database} audience="student" />
+              </div>
+              {currentUser && <div data-tour="profile"><ProfileLink user={currentUser} /></div>}
             </div>
           </div>
         </header>
 
+        <QuickStartGuide
+          open={quickGuideOpen}
+          onClose={closeQuickGuide}
+          user={currentUser}
+          steps={STUDENT_GUIDE_STEPS}
+        />
+
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-          <div className="mb-8 text-center">
+          <div className="mb-8 text-center" data-tour="student-overview">
             <h1 className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text pb-2 pt-4 text-4xl font-bold leading-relaxed text-transparent">
               Faculty Status
             </h1>
@@ -182,7 +193,7 @@ function Student() {
             </p>
           </div>
 
-          <div className="mb-8 rounded-2xl border border-white/20 bg-white/80 p-6 shadow-lg backdrop-blur-lg">
+          <div className="mb-8 rounded-2xl border border-white/20 bg-white/80 p-6 shadow-lg backdrop-blur-lg" data-tour="student-filters">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_220px]">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700">Search</label>
@@ -224,7 +235,7 @@ function Student() {
               <h3 className="text-lg font-semibold text-red-700">{error}</h3>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-tour="student-cards">
               {filteredData.map((faculty) => (
                 <button
                   key={faculty.id}
@@ -244,6 +255,7 @@ function Student() {
                   <h3 className="text-lg font-semibold text-gray-900">{faculty.name}</h3>
                   <p className="mt-1 text-sm text-gray-600">{faculty.department}</p>
                   <p className="mt-4 text-sm font-medium text-blue-600">{faculty.subject}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Current room: {faculty.room}</p>
                   {faculty.hasClass && (
                     <p className="mt-1 text-xs text-gray-500">{faculty.startTime} - {faculty.endTime}</p>
                   )}
@@ -285,6 +297,7 @@ function Student() {
                   {selectedFaculty.statusLabel}
                 </span>
                 <span className="text-sm text-slate-600">{selectedFaculty.subject}</span>
+                <span className="text-sm text-slate-600">Current room: {selectedFaculty.room}</span>
               </div>
 
               <h3 className="mb-3 text-lg font-semibold text-slate-950">Faculty Schedule</h3>

@@ -6,11 +6,13 @@ const Landing = lazy(() => import('./pages/Landing/Landing'));
 const Home = lazy(() => import('./pages/Home/Home'));
 const Login = lazy(() => import('./pages/Login/Login'));
 const Profile = lazy(() => import('./pages/Profile/Profile'));
+const Notifications = lazy(() => import('./pages/Notifications/Notifications'));
 const Student = lazy(() => import('./pages/Student/Student'));
 const Faculty = lazy(() => import('./pages/Faculty/Faculty'));
 const FacultySchedules = lazy(() => import('./pages/Faculty/FacultySchedules'));
 const RoomTracker = lazy(() => import('./pages/Faculty/RoomTracker'));
 const Admin = lazy(() => import('./pages/Admin/Admin'));
+const Kiosk = lazy(() => import('./pages/Kiosk/Kiosk'));
 
 function App() {
   return (
@@ -22,12 +24,14 @@ function App() {
             <Route path="/home" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/notifications" element={<Notifications />} />
             <Route path="/signup" element={<Navigate to="/login" replace />} />
             <Route path="/student" element={<Student />} />
             <Route path="/faculty" element={<Faculty />} />
             <Route path="/faculty-schedules" element={<FacultySchedules />} />
             <Route path="/room-tracker" element={<RoomTracker />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/kiosk" element={<Kiosk />} />
           </Routes>
         </Suspense>
       </div>

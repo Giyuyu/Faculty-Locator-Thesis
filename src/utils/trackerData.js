@@ -185,6 +185,9 @@ const buildFacultyLocation = ({ faculty, status, activeSession, rooms, subjects,
   const roomId = status?.current_room_id || activeSession?.room_id || schedule?.room_id || '';
   const room = getRoomRecord(rooms, roomId, schedule?.room_name);
   const roomName = room?.room_name || schedule?.room_name || roomId || 'Not in room';
+  const previousRoomId = status?.previous_room_id || '';
+  const previousRoom = getRoomRecord(rooms, previousRoomId);
+  const previousSubjectId = status?.previous_subject_id || '';
   const subjectId = liveSchedule?.subject_id || status?.current_subject_id || activeSession?.subject_id || schedule?.subject_id || '';
   const storedStatus = status?.current_status || (activeSession ? activeSession.session_status : 'Offline');
   const currentStatus = activeSession ? (schedule?.subject_id ? 'In-Class' : 'Available') : storedStatus;
@@ -195,6 +198,10 @@ const buildFacultyLocation = ({ faculty, status, activeSession, rooms, subjects,
     name: facultyDisplayName(faculty),
     roomId,
     room: currentStatus === 'Offline' ? 'Not in room' : roomName,
+    previousRoomId,
+    previousRoom: previousRoom?.room_name || previousRoomId || 'No previous room',
+    previousSubjectId,
+    previousSubject: getSubjectName(subjects, previousSubjectId) || 'No previous subject',
     floor: currentStatus === 'Offline' ? 'Not Available' : (room?.floor || getFloorFromRoomName(roomName)),
     status: currentStatus,
     statusLabel: getStatusLabel(currentStatus),

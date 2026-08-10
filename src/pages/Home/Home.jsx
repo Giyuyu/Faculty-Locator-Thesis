@@ -11,6 +11,9 @@ import {
 } from 'react-icons/fa';
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
+import ProfileLink from '../../components/ProfileLink';
+import QuickStartGuide, { HOME_GUIDE_STEPS } from '../../components/QuickStartGuide';
+import { getNotificationAudience } from '../../utils/notifications';
 import logo from '../../assets/sti_logo.png';
 //import heroPoster from '../../assets/sti_hero2.jpg';
 import adminVideo from '../../assets/videos/Admin.mp4';
@@ -22,8 +25,6 @@ import {
   openUserProfile,
   signOutCurrentUser,
 } from '../../utils/profileActions';
-
-const defaultHeroVideo = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 
 const modules = [
   {
@@ -64,11 +65,38 @@ const modules = [
   },
 ];
 
+const moduleTourById = {
+  admin: {
+    title: 'Admin Module',
+    label: 'Control',
+    body: 'Admins manage users, roles, permissions, accounts, batch uploads, rooms, reservations, maintenance, dashboards, and reports.',
+  },
+  faculty: {
+    title: 'Faculty Module',
+    label: 'Teach',
+    body: 'Faculty tools include the faculty tracker, room tracker, and schedule management.',
+  },
+  student: {
+    title: 'Student Module',
+    label: 'Locate',
+    body: "Students can view faculty status and open a faculty card to see that faculty member's schedule.",
+  },
+};
+
+const getStoredUser = () => {
+  try {
+    const storedUser = localStorage.getItem('currentUser');
+    return storedUser ? JSON.parse(storedUser) : null;
+  } catch {
+    return null;
+  }
+};
+
 function Home() {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(getStoredUser);
   const [selectedModuleId, setSelectedModuleId] = useState('');
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [activeHeroVideo, setActiveHeroVideo] = useState('');
   const [incomingHeroVideo, setIncomingHeroVideo] = useState('');
   const [incomingVideoReady, setIncomingVideoReady] = useState(false);
@@ -80,8 +108,8 @@ function Home() {
       return;
     }
 
-    setCurrentUser(JSON.parse(storedUser));
-  }, [navigate]);
+    if (!currentUser) setCurrentUser(JSON.parse(storedUser));
+  }, [currentUser, navigate]);
 
   const availableModules = useMemo(() => {
     if (!currentUser) return [];
@@ -98,7 +126,37 @@ function Home() {
   }, [availableModules, selectedModuleId]);
 
   const selectedModule = availableModules.find((module) => module.id === selectedModuleId) || availableModules[0];
-  const heroVideo = selectedModule?.videoSrc || defaultHeroVideo;
+  const heroVideo = selectedModule?.videoSrc || '';
+  const homeGuideSteps = useMemo(() => {
+    const accessibleIds = new Set(availableModules.map((module) => module.id));
+    const accessibleTourSelectors = availableModules
+      .map((module) => `[data-tour="${module.id}-module"]`);
+
+    return HOME_GUIDE_STEPS
+      .filter((step) => !step.moduleId || accessibleIds.has(step.moduleId))
+      .map((step) => {
+        if (step.title === 'Choose A Module') {
+          const [selector, ...extraSelectors] = accessibleTourSelectors;
+          return {
+            ...step,
+            selector: selector || '[data-tour="modules"]',
+            extraSelectors,
+            body: availableModules.length > 1
+              ? 'Pick one of your available module cards. The selected card updates the video, checklist, and Enter action.'
+              : 'Your available module is shown here. Press Enter to continue.',
+          };
+        }
+
+        if (step.moduleId && moduleTourById[step.moduleId]) {
+          return {
+            ...step,
+            ...moduleTourById[step.moduleId],
+          };
+        }
+
+        return step;
+      });
+  }, [availableModules]);
 
   useEffect(() => {
     if (!heroVideo) return;
@@ -140,7 +198,7 @@ function Home() {
 
   return (
     <div className="h-screen overflow-hidden bg-white pt-14 text-slate-950">
-      <header className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center justify-between border-b border-slate-100 bg-white px-4 shadow-sm">
+      <header className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center justify-between border-b border-slate-100 bg-white px-4 shadow-sm" data-tour="module-navbar">
         <div className="flex min-w-0 items-center gap-4">
           <div className="h-9 w-9 shrink-0" aria-hidden="true" />
           <div className="flex items-center gap-3">
@@ -152,60 +210,49 @@ function Home() {
         </div>
 
         <div className="flex shrink-0 items-center gap-4 text-slate-600">
-          <button type="button" onClick={handleEnter} className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Open selected module">
+          <button
+            type="button"
+            onClick={() => setQuickGuideOpen(true)}
+            className="rounded-md p-2 text-slate-600 hover:bg-slate-100"
+            aria-label="Open quick start guide"
+            title="Quick start guide"
+            data-tour="guide"
+          >
             <FaBook className="h-4 w-4" />
           </button>
-          <NotificationBell database={database} />
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setProfileOpen((open) => !open)}
-              className="flex items-center gap-2"
-              aria-expanded={profileOpen}
-              aria-haspopup="menu"
-            >
-              <FaUserCircle className="h-9 w-9 text-slate-300" />
-              <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 md:inline">
-                {currentUser.name || 'User'}
-              </span>
-              <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {profileOpen && (
-              <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">
-                  My profile
-                </button>
-                <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">
-                  Change password
-                </button>
-                <div className="my-2 border-t border-slate-200" />
-                <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">
-                  Theme settings
-                </button>
-                <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">
-                  Sign out
-                </button>
-              </div>
-            )}
+          <div data-tour="notifications">
+            <NotificationBell database={database} audience={getNotificationAudience(currentUser)} />
           </div>
+          <div data-tour="profile"><ProfileLink user={currentUser} /></div>
         </div>
       </header>
 
-      <section className="relative h-[calc(100vh-17rem)] overflow-hidden">
-        <video
-          key={activeHeroVideo || heroVideo}
-          className={`absolute inset-0 h-full w-full object-cover object-[center_18%] transition-opacity duration-700 ease-out ${
-            incomingHeroVideo && incomingVideoReady ? 'opacity-0' : 'opacity-100'
-          }`}
-          autoPlay
-          muted
-          loop
-          playsInline
-          //poster={heroPoster}
-        >
-          <source src={activeHeroVideo || heroVideo} type="video/mp4" />
-        </video>
+      <QuickStartGuide
+        open={quickGuideOpen}
+        onClose={() => setQuickGuideOpen(false)}
+        user={currentUser}
+        steps={homeGuideSteps}
+        onSelectModule={(moduleId) => {
+          if (availableModules.some((module) => module.id === moduleId)) setSelectedModuleId(moduleId);
+        }}
+      />
+
+      <section className="relative h-[calc(100vh-17rem)] overflow-hidden bg-slate-900" data-tour="hero">
+        {(activeHeroVideo || heroVideo) && (
+          <video
+            key={activeHeroVideo || heroVideo}
+            className={`absolute inset-0 h-full w-full object-cover object-[center_18%] transition-opacity duration-700 ease-out ${
+              incomingHeroVideo && incomingVideoReady ? 'opacity-0' : 'opacity-100'
+            }`}
+            autoPlay
+            muted
+            loop
+            playsInline
+            //poster={heroPoster}
+          >
+            <source src={activeHeroVideo || heroVideo} type="video/mp4" />
+          </video>
+        )}
         {incomingHeroVideo && (
           <video
             key={incomingHeroVideo}
@@ -244,6 +291,7 @@ function Home() {
               onClick={handleEnter}
               disabled={!selectedModule}
               className="mt-4 inline-flex min-w-36 justify-center rounded-full bg-[#27336f] px-7 py-2 text-sm font-semibold text-white shadow-lg shadow-slate-400/40 hover:bg-[#1f2858] disabled:cursor-not-allowed disabled:opacity-50"
+              data-tour="enter"
             >
               Enter
             </button>
@@ -251,7 +299,7 @@ function Home() {
         </div>
       </section>
 
-      <section id="modules" className="h-56 overflow-hidden border-t border-slate-100 px-6 py-4 sm:px-10 lg:px-16">
+      <section id="modules" className="h-56 overflow-hidden border-t border-slate-100 px-6 py-4 sm:px-10 lg:px-16" data-tour="modules">
         {availableModules.length ? (
           <div className="grid h-full grid-cols-3 gap-5">
             {availableModules.map((module) => {
@@ -262,6 +310,7 @@ function Home() {
                   type="button"
                   key={module.id}
                   onClick={() => setSelectedModuleId(module.id)}
+                  data-tour={module.id === 'admin' ? 'admin-module' : module.id === 'faculty' ? 'faculty-module' : module.id === 'student' ? 'student-module' : undefined}
                   className={`group h-full min-w-0 rounded-xl p-4 text-left transition duration-300 ${
                     isSelected
                       ? 'bg-[#fffafa] shadow-[18px_18px_28px_rgba(239,68,68,0.30),-18px_-18px_28px_rgba(99,102,241,0.20)] ring-2 ring-red-200'

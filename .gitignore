@@ -49,3 +49,7 @@ Mobile App/firebase-debug.log
 *.sw?
 .vercel
 .env*.local
+
+# Persisted Firebase Emulator data (keep the directory, not local records)
+data/local-firebase/*
+!data/local-firebase/.gitkeep

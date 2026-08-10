@@ -1,11 +1,17 @@
 import pyrebase
 import os
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
 ENVIRONMENT = os.getenv("STI_LOCATOR_ENV", "production").strip().lower()
 ENV_FILE_BY_MODE = {
+    "local": ".env.localdb",
+    "development": ".env.localdb",
     "prod": ".env.production",
     "production": ".env.production",
     "stg": ".env.staging",
@@ -15,6 +21,8 @@ ENV_FILE_BY_MODE = {
 
 
 def get_current_environment():
+    if ENVIRONMENT in ("local", "development"):
+        return "local"
     return "staging" if ENVIRONMENT in ("stg", "stage", "staging") else "production"
 
 
@@ -55,6 +63,13 @@ def load_firebase_config():
 
 
 FIREBASE_CONFIG = load_firebase_config()
+IS_LOCAL = get_current_environment() == "local"
+LOCAL_DATABASE_HOST = os.getenv("STI_LOCATOR_LOCAL_DB_HOST", "127.0.0.1")
+LOCAL_DATABASE_PORT = int(os.getenv("STI_LOCATOR_LOCAL_DB_PORT", "9000"))
+LOCAL_PROJECT_ID = FIREBASE_CONFIG.get("projectId") or "sti-locator-local"
+LOCAL_DATABASE_NAMESPACE = os.getenv(
+    "STI_LOCATOR_LOCAL_DB_NAMESPACE", f"{LOCAL_PROJECT_ID}-default-rtdb"
+)
 
 # Global Firebase app instance
 _firebase_app = None
@@ -71,7 +86,7 @@ def initialize_firebase():
             if not FIREBASE_CONFIG.get("apiKey") or not FIREBASE_CONFIG.get("databaseURL"):
                 print(f"Firebase configuration is missing for {get_current_environment()} environment.")
                 return False
-            _firebase_app = pyrebase.initialize_app(FIREBASE_CONFIG)
+            _firebase_app = "local-emulator" if IS_LOCAL else pyrebase.initialize_app(FIREBASE_CONFIG)
             return True
         except Exception as e:
             print(f"Firebase initialization error: {e}")
@@ -84,7 +99,7 @@ def get_database_ref():
     try:
         if not initialize_firebase():
             return None
-        return _firebase_app.database()
+        return None if IS_LOCAL else _firebase_app.database()
     except Exception as e:
         print(f"Error getting database reference: {e}")
         return None
@@ -93,6 +108,8 @@ def get_database_ref():
 def get_data(path=""):
     """Get data from Firebase Realtime Database"""
     try:
+        if IS_LOCAL:
+            return _local_request("GET", path)
         db = get_database_ref()
         if not db:
             return None
@@ -107,6 +124,9 @@ def get_data(path=""):
 def set_data(path, data):
     """Set data in Firebase Realtime Database"""
     try:
+        if IS_LOCAL:
+            _local_request("PUT", path, data)
+            return True
         db = get_database_ref()
         if not db:
             return False
@@ -119,6 +139,9 @@ def set_data(path, data):
 def update_data(path, data):
     """Update data in Firebase Realtime Database"""
     try:
+        if IS_LOCAL:
+            _local_request("PATCH", path, data)
+            return True
         db = get_database_ref()
         if not db:
             return False
@@ -131,6 +154,9 @@ def update_data(path, data):
 def delete_data(path):
     """Delete data from Firebase Realtime Database"""
     try:
+        if IS_LOCAL:
+            _local_request("DELETE", path)
+            return True
         db = get_database_ref()
         if not db:
             return False
@@ -139,3 +165,27 @@ def delete_data(path):
     except Exception as e:
         print(f"Error deleting data from Firebase: {e}")
         return False
+
+
+def _local_request(method, path="", data=None):
+    """Read and write the shared Firebase Realtime Database emulator."""
+    clean_path = str(path or "").strip("/")
+    encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in clean_path.split("/") if part)
+    suffix = f"/{encoded_path}.json" if encoded_path else "/.json"
+    query = urllib.parse.urlencode({"ns": LOCAL_DATABASE_NAMESPACE})
+    url = f"http://{LOCAL_DATABASE_HOST}:{LOCAL_DATABASE_PORT}{suffix}?{query}"
+    body = None if data is None else json.dumps(data).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = response.read().decode("utf-8")
+            return json.loads(payload) if payload else None
+    except urllib.error.URLError as error:
+        raise RuntimeError(
+            "Local Firebase is not running. Start it with: .\\run.bat local-db"
+        ) from error

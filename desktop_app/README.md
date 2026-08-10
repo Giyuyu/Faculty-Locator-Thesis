@@ -10,10 +10,12 @@ Python desktop utilities for STI Locator.
 - `rfid_utils.py` - RFID reader auto-detection and scan parsing
 - `firebase_config.py` - Firebase access helpers
 
-## Setup
+## Setup from PowerShell
 
-```bat
-setup_python_env.bat
+From the repository root:
+
+```powershell
+.\setup.bat
 ```
 
 ## Run
@@ -23,27 +25,52 @@ python login.py
 python admin.py
 ```
 
-From the project root, use these launchers:
+From the project root, use the central launcher. PowerShell requires `\.\` before a batch file in the current directory:
 
-```bat
-run-desktop-login.bat
-run-desktop-admin.bat
-run-desktop-login-stg.bat
-run-desktop-admin-stg.bat
+```powershell
+.\run.bat login
+.\run.bat admin
+.\run.bat login-stg
+.\run.bat admin-stg
+.\run.bat login-local
+.\run.bat admin-local
 ```
 
-`run-desktop-login.bat` and `run-desktop-admin.bat` use production.
+`login` and `admin` use production.
 
-`run-desktop-login-stg.bat` and `run-desktop-admin-stg.bat` use staging.
+`login-stg` and `admin-stg` use staging.
+
+`login-local` and `admin-local` use the shared Firebase emulator. Start it in a
+separate terminal first:
+
+```powershell
+.\run.bat local-db
+```
+
+The individual batch files are stored in the repository's `launchers\` folder.
 
 You can also choose the Firebase environment manually:
 
-```bat
-set STI_LOCATOR_ENV=production
-python desktop_app\login.py
+```powershell
+$env:STI_LOCATOR_ENV = "production"
+.\.venv\Scripts\python.exe desktop_app\login.py
 ```
 
-```bat
-set STI_LOCATOR_ENV=staging
-python desktop_app\login.py
+```powershell
+$env:STI_LOCATOR_ENV = "staging"
+.\.venv\Scripts\python.exe desktop_app\login.py
+```
+
+```powershell
+$env:STI_LOCATOR_ENV = "local"
+.\.venv\Scripts\python.exe desktop_app\login.py
+```
+
+Local mode uses the Realtime Database emulator at `127.0.0.1:9000`. It never
+falls back to staging or production if the emulator is unavailable.
+
+If PowerShell reports that `run.bat` is not recognized, use:
+
+```powershell
+.\run.bat admin
 ```

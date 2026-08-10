@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MdApps, MdPeople, MdSchedule, MdLogout, MdLocationOn } from 'react-icons/md';
-import { FaBars, FaChevronDown, FaUserCircle } from 'react-icons/fa';
+import { FaBars, FaBook, FaChevronDown, FaUserCircle } from 'react-icons/fa';
 import { ref, onValue } from 'firebase/database';
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
+import ProfileLink from '../../components/ProfileLink';
+import QuickStartGuide, { FACULTY_GUIDE_STEPS } from '../../components/QuickStartGuide';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData } from '../../utils/trackerData';
 import {
@@ -22,7 +24,7 @@ function Faculty() {
   const [selectedFaculty, setSelectedFaculty] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => localStorage.getItem('moduleSidebarOpen') === 'true');
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(() => Boolean(sessionStorage.getItem('quickTourResume:faculty-v2')));
   const [currentUser, setCurrentUser] = useState(null);
   const [facultyLocations, setFacultyLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +49,18 @@ function Faculty() {
     }
   }, [navigate]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+    const hasTourResume = Boolean(sessionStorage.getItem('quickTourResume:faculty-v2'));
+    if (hasTourResume || localStorage.getItem('quickStartSeen:faculty:v2') !== 'true') {
+      setQuickGuideOpen(true);
+      localStorage.setItem('quickStartSeen:faculty:v2', 'true');
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (quickGuideOpen && !isSidebarOpen) setSidebarPreference(true);
+  }, [quickGuideOpen, isSidebarOpen]);
 
   // Fetch live faculty locations from the Python desktop app schema.
   useEffect(() => {
@@ -82,6 +96,11 @@ function Faculty() {
     setIsSidebarOpen(open);
   };
 
+  const closeQuickGuide = () => {
+    localStorage.setItem('quickStartSeen:faculty:v2', 'true');
+    setQuickGuideOpen(false);
+  };
+
   const openFacultyModal = (faculty) => {
     setSelectedFaculty(faculty);
     setIsModalOpen(true);
@@ -109,7 +128,7 @@ function Faculty() {
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 pt-14 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       {/* Sidebar */}
-      <div className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${isSidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
+      <div data-tour="module-sidebar" className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${isSidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
         <div className={`relative h-full w-72 px-4 py-5 transition-opacity duration-200 ease-in-out ${isSidebarOpen ? 'opacity-100 delay-100' : 'pointer-events-none opacity-0'}`}>
         <div className="relative flex-1 overflow-y-auto">
           <div className="flex items-center gap-3">
@@ -124,15 +143,15 @@ function Faculty() {
 
           {/* Navigation Items */}
           <nav className="mt-8 space-y-1">
-            <div className="flex items-center gap-3 rounded-md bg-gradient-to-r from-blue-500 to-blue-600 px-3 py-2.5 text-sm font-medium text-white shadow-lg">
+            <div className="flex items-center gap-3 rounded-md bg-gradient-to-r from-blue-500 to-blue-600 px-3 py-2.5 text-sm font-medium text-white shadow-lg" data-tour="faculty-tracker-nav">
               <MdPeople className="h-5 w-5" />
               <span>Faculty Tracker</span>
             </div>
-            <Link to="/room-tracker" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors">
+            <Link to="/room-tracker" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors" data-tour="faculty-rooms-nav">
               <MdLocationOn className="h-5 w-5" />
               <span>Room Tracker</span>
             </Link>
-            <Link to="/faculty-schedules" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors">
+            <Link to="/faculty-schedules" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors" data-tour="faculty-schedules-nav">
               <MdSchedule className="h-5 w-5" />
               <span>Schedules</span>
             </Link>
@@ -143,7 +162,7 @@ function Faculty() {
       </div>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm">
+        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm" data-tour="module-navbar">
           <div className="flex h-14 w-full items-center justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <button
@@ -160,40 +179,38 @@ function Faculty() {
             </div>
 
             <div className="flex shrink-0 items-center gap-4 text-slate-600">
-              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules">
+              <button
+                type="button"
+                onClick={() => setQuickGuideOpen(true)}
+                className="rounded-md p-2 text-slate-600 hover:bg-slate-100"
+                aria-label="Open faculty guide"
+                title="Quick start guide"
+                data-tour="guide"
+              >
+                <FaBook className="h-4 w-4" />
+              </button>
+              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules" data-tour="module-switcher">
                 <MdApps className="h-5 w-5" />
               </Link>
-              <NotificationBell database={database} />
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setProfileOpen((open) => !open)}
-                  className="flex items-center gap-2"
-                  aria-expanded={profileOpen}
-                  aria-haspopup="menu"
-                >
-                  <FaUserCircle className="h-9 w-9 text-slate-300" />
-                  <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 md:inline">{currentUser ? currentUser.name : 'Faculty Member'}</span>
-                  <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {profileOpen && (
-                  <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                    <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
-                    <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Change password</button>
-                    <div className="my-2 border-t border-slate-200" />
-                    <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
-                    <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Sign out</button>
-                  </div>
-                )}
+              <div data-tour="notifications">
+                <NotificationBell database={database} audience="faculty" />
               </div>
+              <div data-tour="profile"><ProfileLink user={currentUser} /></div>
             </div>
           </div>
         </header>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        <QuickStartGuide
+          open={quickGuideOpen}
+          onClose={closeQuickGuide}
+          user={currentUser}
+          steps={FACULTY_GUIDE_STEPS}
+          tourKey="faculty-v2"
+        />
+
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8" data-tour="faculty-main">
         {/* Header */}
-        <div className="text-center mb-10">
+        <div className="text-center mb-10" data-tour="faculty-tracker">
           <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-4 bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent leading-relaxed pt-4 pb-2">
             Faculty Tracker
           </h1>
@@ -203,7 +220,7 @@ function Faculty() {
         </div>
 
         {/* Search and Filters */}
-        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg rounded-2xl shadow-lg border border-white/20 dark:border-gray-700/20 p-6 mb-10">
+        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg rounded-2xl shadow-lg border border-white/20 dark:border-gray-700/20 p-6 mb-10" data-tour="faculty-filters">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Search */}
             <div className="md:col-span-2">
@@ -259,7 +276,7 @@ function Faculty() {
             <p className="text-gray-600 dark:text-gray-400">{error}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8" data-tour="faculty-cards">
             {filteredData.map((faculty) => (
               <div
                 key={faculty.id}

@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MdApps, MdPeople, MdSchedule, MdLogout, MdCloudUpload, MdLocationOn, MdAccessTime, MdEventBusy, MdClass, MdEventNote, MdCheck, MdDeleteSweep } from 'react-icons/md';
-import { FaBars, FaChevronDown, FaEye, FaUserCircle } from 'react-icons/fa';
+import { FaBars, FaBook, FaChevronDown, FaEye, FaUserCircle } from 'react-icons/fa';
 import * as XLSX from 'xlsx';
 import Swal from 'sweetalert2';
 import { ref, set, get, push, update, onValue } from 'firebase/database';
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
+import ProfileLink from '../../components/ProfileLink';
+import QuickStartGuide, { FACULTY_GUIDE_STEPS } from '../../components/QuickStartGuide';
+import { publishScheduleNotification } from '../../utils/notifications';
 import logo from '../../assets/sti_logo.png';
 import {
   changeCurrentUserPassword,
@@ -217,7 +220,7 @@ function buildWorkbookDocumentPreview(workbook, fileName) {
 function FacultySchedules() {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => localStorage.getItem('moduleSidebarOpen') === 'true');
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [quickGuideOpen, setQuickGuideOpen] = useState(() => Boolean(sessionStorage.getItem('quickTourResume:faculty-v2')));
   const [currentUser, setCurrentUser] = useState(() => {
     const user = localStorage.getItem('currentUser');
     return user ? JSON.parse(user) : null;
@@ -239,6 +242,19 @@ function FacultySchedules() {
       navigate('/home');
     }
   }, [currentUser, navigate]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const hasTourResume = Boolean(sessionStorage.getItem('quickTourResume:faculty-v2'));
+    if (hasTourResume || localStorage.getItem('quickStartSeen:faculty:v2') !== 'true') {
+      setQuickGuideOpen(true);
+      localStorage.setItem('quickStartSeen:faculty:v2', 'true');
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (quickGuideOpen && !isSidebarOpen) setSidebarPreference(true);
+  }, [quickGuideOpen, isSidebarOpen]);
 
   useEffect(() => {
     const facultiesRef = ref(database, 'faculties');
@@ -445,6 +461,11 @@ function FacultySchedules() {
   const setSidebarPreference = (open) => {
     localStorage.setItem('moduleSidebarOpen', String(open));
     setIsSidebarOpen(open);
+  };
+
+  const closeQuickGuide = () => {
+    localStorage.setItem('quickStartSeen:faculty:v2', 'true');
+    setQuickGuideOpen(false);
   };
 
   // Function to parse time
@@ -1181,7 +1202,7 @@ function FacultySchedules() {
       await update(ref(database), updates);
 
       // Update global last updated
-      await update(ref(database, 'lastScheduleUpdate'), {
+      await publishScheduleNotification(database, {
         name: currentUser.name,
         time: importedAt,
         import_batch_id: importBatchId,
@@ -1393,7 +1414,7 @@ function FacultySchedules() {
           schedule.scheduleId === scheduleId ? updatedSchedule : schedule
         ));
 
-        await update(ref(database, 'lastScheduleUpdate'), {
+        await publishScheduleNotification(database, {
           name: currentUser.name,
           time: new Date().toISOString()
         });
@@ -1766,7 +1787,7 @@ function FacultySchedules() {
       });
 
       await update(ref(database), updates);
-      await update(ref(database, 'lastScheduleUpdate'), {
+      await publishScheduleNotification(database, {
         name: currentUser.name,
         time: actionTime,
         active_import_batch_id: selectedBatchId,
@@ -1852,7 +1873,7 @@ function FacultySchedules() {
     });
 
     await update(ref(database), updates);
-    await update(ref(database, 'lastScheduleUpdate'), {
+    await publishScheduleNotification(database, {
       name: currentUser.name,
       time: new Date().toISOString(),
       [`${action}_import_batch_id`]: selectedBatchId,
@@ -1941,7 +1962,7 @@ function FacultySchedules() {
     updates[`schedule_uploads/${selectedBatchId}/retention_until`] = null;
 
     await update(ref(database), updates);
-    await update(ref(database, 'lastScheduleUpdate'), {
+    await publishScheduleNotification(database, {
       name: currentUser.name,
       time: new Date().toISOString(),
       restored_import_batch_id: selectedBatchId,
@@ -2010,7 +2031,7 @@ function FacultySchedules() {
     updates[`schedule_uploads/${selectedBatchId}/deleted_at`] = new Date().toISOString();
 
     await update(ref(database), updates);
-    await update(ref(database, 'lastScheduleUpdate'), {
+    await publishScheduleNotification(database, {
       name: currentUser.name,
       time: new Date().toISOString(),
       deleted_archived_import_batch_id: selectedBatchId,
@@ -2038,7 +2059,7 @@ function FacultySchedules() {
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 pt-14 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       {/* Sidebar */}
-      <div className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${isSidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
+      <div data-tour="module-sidebar" className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 overflow-hidden border-r border-gray-200 bg-white shadow-lg transition-[width] duration-300 ease-in-out ${isSidebarOpen ? 'w-72' : 'w-0 border-r-0 shadow-none'}`}>
         <div className={`relative h-full w-72 px-4 py-5 transition-opacity duration-200 ease-in-out ${isSidebarOpen ? 'opacity-100 delay-100' : 'pointer-events-none opacity-0'}`}>
         <div className="relative flex-1 overflow-y-auto">
           <div className="flex items-center gap-3">
@@ -2053,15 +2074,15 @@ function FacultySchedules() {
 
           {/* Navigation Items */}
           <nav className="mt-8 space-y-1">
-            <Link to="/faculty" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors">
+            <Link to="/faculty" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors" data-tour="faculty-tracker-nav">
               <MdPeople className="h-5 w-5" />
               <span>Faculty Tracker</span>
             </Link>
-            <Link to="/room-tracker" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors">
+            <Link to="/room-tracker" className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-purple-600 hover:bg-purple-50 transition-colors" data-tour="faculty-rooms-nav">
               <MdLocationOn className="h-5 w-5" />
               <span>Room Tracker</span>
             </Link>
-            <div className="flex items-center gap-3 rounded-md bg-gradient-to-r from-blue-500 to-blue-600 px-3 py-2.5 text-sm font-medium text-white shadow-lg">
+            <div className="flex items-center gap-3 rounded-md bg-gradient-to-r from-blue-500 to-blue-600 px-3 py-2.5 text-sm font-medium text-white shadow-lg" data-tour="faculty-schedules-nav">
               <MdSchedule className="h-5 w-5" />
               <span>Schedules</span>
             </div>
@@ -2072,7 +2093,7 @@ function FacultySchedules() {
       </div>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm">
+        <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-100 bg-white px-4 shadow-sm" data-tour="module-navbar">
           <div className="flex h-14 w-full items-center justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <button
@@ -2089,40 +2110,38 @@ function FacultySchedules() {
             </div>
 
             <div className="flex shrink-0 items-center gap-4 text-slate-600">
-              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules">
+              <button
+                type="button"
+                onClick={() => setQuickGuideOpen(true)}
+                className="rounded-md p-2 text-slate-600 hover:bg-slate-100"
+                aria-label="Open faculty guide"
+                title="Quick start guide"
+                data-tour="guide"
+              >
+                <FaBook className="h-4 w-4" />
+              </button>
+              <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100" aria-label="Modules" data-tour="module-switcher">
                 <MdApps className="h-5 w-5" />
               </Link>
-              <NotificationBell database={database} />
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setProfileOpen((open) => !open)}
-                  className="flex items-center gap-2"
-                  aria-expanded={profileOpen}
-                  aria-haspopup="menu"
-                >
-                  <FaUserCircle className="h-9 w-9 text-slate-300" />
-                  <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 md:inline">{currentUser ? currentUser.name : 'Faculty Member'}</span>
-                  <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {profileOpen && (
-                  <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl" role="menu">
-                    <button type="button" onClick={() => openUserProfile(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">My profile</button>
-                    <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Change password</button>
-                    <div className="my-2 border-t border-slate-200" />
-                    <button type="button" onClick={() => openThemeSettings(navigate)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Theme settings</button>
-                    <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50" role="menuitem">Sign out</button>
-                  </div>
-                )}
+              <div data-tour="notifications">
+                <NotificationBell database={database} audience="faculty" />
               </div>
+              <div data-tour="profile"><ProfileLink user={currentUser} /></div>
             </div>
           </div>
         </header>
 
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <QuickStartGuide
+          open={quickGuideOpen}
+          onClose={closeQuickGuide}
+          user={currentUser}
+          steps={FACULTY_GUIDE_STEPS}
+          tourKey="faculty-v2"
+        />
+
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8" data-tour="faculty-schedules-main">
           <div className={`mb-6 grid gap-4 ${canManageSchedules ? 'xl:grid-cols-[360px_minmax(0,1fr)] xl:items-stretch' : 'xl:grid-cols-1'}`}>
-            <div className={`rounded-lg border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800/80 ${canManageSchedules ? '' : 'max-w-none'}`}>
+            <div className={`rounded-lg border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800/80 ${canManageSchedules ? '' : 'max-w-none'}`} data-tour="faculty-tracker">
               <div className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] text-blue-600 ring-1 ring-blue-100 dark:bg-blue-950/30 dark:text-blue-300 dark:ring-blue-900/60">
                 Faculty Module
               </div>
@@ -2150,7 +2169,7 @@ function FacultySchedules() {
               )}
             </div>
             {canManageSchedules && (
-              <div className="w-full rounded-lg border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/80">
+              <div className="w-full rounded-lg border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/80" data-tour="faculty-schedule-controls">
                 <div className="grid gap-3 md:grid-cols-2">
                   <input
                     type="text"
@@ -2307,7 +2326,7 @@ function FacultySchedules() {
           </div>
 
 
-          <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800" data-tour="faculty-filters">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-base font-semibold text-slate-950 dark:text-gray-100">Weekly Schedule</h2>

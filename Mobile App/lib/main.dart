@@ -1,14 +1,57 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
+import 'firebase_options_local.dart';
+import 'firebase_options_staging.dart';
+
+const stiLogoAsset = 'resources/sti_logo-DgEAj6lq.png';
+const appEnvironment = String.fromEnvironment(
+  'APP_ENV',
+  defaultValue: 'production',
+);
+const isStaging = appEnvironment == 'staging';
+const isLocal = appEnvironment == 'local';
+const localFirebaseHostOverride = String.fromEnvironment(
+  'LOCAL_FIREBASE_HOST',
+  defaultValue: '',
+);
+
+late final FirebaseApp locatorFirebaseApp;
+FirebaseAuth get locatorAuth =>
+    FirebaseAuth.instanceFor(app: locatorFirebaseApp);
+FirebaseDatabase get locatorDatabase =>
+    FirebaseDatabase.instanceFor(app: locatorFirebaseApp);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final firebaseOptions = isLocal
+      ? LocalFirebaseOptions.currentPlatform
+      : isStaging
+      ? StagingFirebaseOptions.currentPlatform
+      : DefaultFirebaseOptions.currentPlatform;
+  locatorFirebaseApp = await Firebase.initializeApp(
+    name: isLocal
+        ? 'sti-locator-local'
+        : isStaging
+        ? 'sti-locator-staging'
+        : null,
+    options: firebaseOptions,
+  );
+  if (isLocal) {
+    final emulatorHost = localFirebaseHostOverride.isNotEmpty
+        ? localFirebaseHostOverride
+        : (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+        ? '10.0.2.2'
+        : '127.0.0.1';
+    await locatorAuth.useAuthEmulator(emulatorHost, 9099);
+    locatorDatabase.useDatabaseEmulator(emulatorHost, 9000);
+  }
   runApp(const StiLocatorMobileApp());
 }
 
@@ -22,13 +65,15 @@ class MyApp extends StatelessWidget {
 }
 
 class Palette {
-  static const blue = Color(0xFF155EEF);
-  static const navy = Color(0xFF172554);
+  static const blue = Color(0xFF1764FF);
+  static const blueDark = Color(0xFF0B3BA7);
+  static const navy = Color(0xFF14213D);
   static const yellow = Color(0xFFFFE500);
-  static const bg = Color(0xFFF3F7FC);
+  static const bg = Color(0xFFF2F6FF);
+  static const surface = Color(0xFFFFFFFF);
   static const text = Color(0xFF111827);
-  static const muted = Color(0xFF64748B);
-  static const border = Color(0xFFD9E3F0);
+  static const muted = Color(0xFF60708C);
+  static const border = Color(0xFFD8E2F0);
   static const success = Color(0xFF059669);
   static const warning = Color(0xFFF59E0B);
   static const danger = Color(0xFFEF4444);
@@ -46,27 +91,96 @@ class StiLocatorMobileApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: Palette.bg,
-        colorScheme: ColorScheme.fromSeed(seedColor: Palette.blue),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Palette.blue,
+          primary: Palette.blue,
+          surface: Palette.surface,
+        ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
           foregroundColor: Palette.text,
           elevation: 0,
           surfaceTintColor: Colors.white,
+          centerTitle: false,
+          toolbarHeight: 68,
+          shape: Border(bottom: BorderSide(color: Palette.border)),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.white,
+          indicatorColor: const Color(0xFFE8F0FF),
+          height: 72,
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => TextStyle(
+              color: states.contains(WidgetState.selected)
+                  ? Palette.blue
+                  : Palette.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              color: states.contains(WidgetState.selected)
+                  ? Palette.blue
+                  : Palette.muted,
+            ),
+          ),
+        ),
+        cardTheme: const CardThemeData(
+          color: Colors.white,
+          surfaceTintColor: Colors.white,
+          margin: EdgeInsets.zero,
+        ),
+        textTheme: const TextTheme(
+          headlineSmall: TextStyle(
+            color: Palette.text,
+            fontSize: 24,
+            fontWeight: FontWeight.w900,
+          ),
+          titleLarge: TextStyle(
+            color: Palette.text,
+            fontSize: 20,
+            fontWeight: FontWeight.w900,
+          ),
+          bodyMedium: TextStyle(color: Palette.text, height: 1.4),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 15,
+          ),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: Palette.border),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: Palette.border),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: Palette.blue, width: 1.5),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: Palette.blue,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(44, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
       ),
@@ -95,6 +209,13 @@ class AppUser {
   final String? facultyId;
 
   bool get isAdmin => userType == 'admin' || roleIds.contains('admin');
+  bool get isFaculty =>
+      userType.toLowerCase() == 'faculty' ||
+      roleIds.any((role) => role.toLowerCase() == 'faculty');
+  bool get isStudent =>
+      userType.toLowerCase() == 'student' ||
+      roleIds.any((role) => role.toLowerCase() == 'student');
+  String get mobileRole => isFaculty ? 'faculty' : 'student';
   bool has(String permission) => isAdmin || permissions[permission] == true;
 }
 
@@ -104,7 +225,6 @@ class AppData {
     required this.facultyLocations,
     required this.roomLocations,
     required this.schedules,
-    required this.users,
     required this.lastScheduleUpdate,
   });
 
@@ -112,7 +232,6 @@ class AppData {
   final List<FacultyLocation> facultyLocations;
   final List<RoomLocation> roomLocations;
   final List<ScheduleEntry> schedules;
-  final List<UserRow> users;
   final Map<String, dynamic>? lastScheduleUpdate;
 
   factory AppData.from(dynamic value) {
@@ -121,21 +240,56 @@ class AppData {
     final rooms = asMap(raw['rooms']);
     final subjects = asMap(raw['subjects']);
     final schedulesRaw = asMap(raw['schedules']);
+    final scheduleUploads = asMap(raw['schedule_uploads']);
     final statuses = asMap(raw['faculty_status']);
     final sessions = asMap(raw['faculty_login_sessions']);
-    final usersRaw = asMap(raw['users']);
-    final students = asMap(raw['students']);
+
+    final activeUploads =
+        scheduleUploads.values
+            .whereType<Map>()
+            .map(asStringMap)
+            .where(
+              (upload) =>
+                  str(upload['status']).isEmpty ||
+                  str(upload['status']) == 'active',
+            )
+            .toList()
+          ..sort((a, b) {
+            final aDate =
+                DateTime.tryParse(
+                  firstText(a, ['uploaded_at', 'imported_at', 'activated_at']),
+                ) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final bDate =
+                DateTime.tryParse(
+                  firstText(b, ['uploaded_at', 'imported_at', 'activated_at']),
+                ) ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            return bDate.compareTo(aDate);
+          });
+    final activeUploadId = activeUploads.isEmpty
+        ? ''
+        : firstText(activeUploads.first, [
+            'schedule_upload_id',
+            'import_batch_id',
+          ]);
 
     final schedules =
         schedulesRaw.values
             .whereType<Map>()
+            .map(asStringMap)
+            .where((schedule) {
+              final status = str(schedule['status']);
+              if (status.isNotEmpty && status != 'active') return false;
+              if (activeUploadId.isEmpty) return true;
+              final uploadId = firstText(schedule, [
+                'import_batch_id',
+                'original_import_batch_id',
+              ]);
+              return uploadId == activeUploadId;
+            })
             .map(
-              (item) => ScheduleEntry.fromMap(
-                asStringMap(item),
-                subjects,
-                rooms,
-                faculties,
-              ),
+              (item) => ScheduleEntry.fromMap(item, subjects, rooms, faculties),
             )
             .toList()
           ..sort(
@@ -258,39 +412,76 @@ class AppData {
       );
     }).toList()..sort((a, b) => a.room.compareTo(b.room));
 
-    final users = usersRaw.values.whereType<Map>().map((item) {
-      final user = asStringMap(item);
-      final uid = str(user['user_id']);
-      final roleIds = listOfStrings(user['role_ids']);
-      final roleId = str(user['role_id']);
-      final profile = roleId == 'student'
-          ? findByField(students, uid, 'user_id')
-          : findByField(faculties, uid, 'user_id');
-      return UserRow(
-        uid: uid,
-        username: str(user['username']),
-        name: displayName(
-          profile,
-          fallback: str(user['username']).isEmpty ? uid : str(user['username']),
-        ),
-        roles: roleIds.isEmpty
-            ? [roleId.isEmpty ? 'student' : roleId]
-            : roleIds,
-        status: str(user['status']).isEmpty ? 'active' : str(user['status']),
-      );
-    }).toList()..sort((a, b) => a.name.compareTo(b.name));
-
     return AppData(
       raw: raw,
       facultyLocations: facultyLocations,
       roomLocations: roomLocations,
       schedules: schedules,
-      users: users,
       lastScheduleUpdate: raw['lastScheduleUpdate'] is Map
           ? asStringMap(raw['lastScheduleUpdate'])
           : null,
     );
   }
+}
+
+Map<String, dynamic>? notificationForUser(AppData? data, AppUser user) {
+  if (data == null) return null;
+  final audience = user.mobileRole;
+  final notifications = asMap(data.raw['notifications']);
+  final audienceNotifications = asMap(notifications[audience]);
+  final notification = asStringMap(audienceNotifications['latest']);
+  if (notification.isEmpty || str(notification['audience']) != audience) {
+    return null;
+  }
+  return notification;
+}
+
+List<Map<String, dynamic>> notificationsForUser(AppData? data, AppUser user) {
+  if (data == null) return const [];
+  final audience = user.mobileRole;
+  final notifications = asMap(data.raw['notifications']);
+  final audienceNotifications = asMap(notifications[audience]);
+  final items = asMap(audienceNotifications['items']);
+  final results = items.values
+      .whereType<Map>()
+      .map(asStringMap)
+      .where((item) => str(item['audience']) == audience)
+      .toList();
+  final latest = asStringMap(audienceNotifications['latest']);
+  if (latest.isNotEmpty &&
+      str(latest['audience']) == audience &&
+      !results.any(
+        (item) =>
+            notificationKey(item, audience) ==
+            notificationKey(latest, audience),
+      )) {
+    results.add(latest);
+  }
+  results.sort((a, b) {
+    final aTime = DateTime.tryParse(str(a['time'])) ?? DateTime(1970);
+    final bTime = DateTime.tryParse(str(b['time'])) ?? DateTime(1970);
+    return bTime.compareTo(aTime);
+  });
+  return results;
+}
+
+String notificationKey(Map<String, dynamic> notification, String audience) {
+  final eventId = str(notification['event_id']);
+  if (eventId.isNotEmpty) return '$audience|$eventId';
+  return '$audience|${str(notification['time'])}|${str(notification['title'])}';
+}
+
+String notificationTimeLabel(dynamic value) {
+  final raw = str(value);
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return raw.isEmpty ? 'No timestamp' : raw;
+  final local = parsed.toLocal();
+  final hour = local.hour == 0
+      ? 12
+      : (local.hour > 12 ? local.hour - 12 : local.hour);
+  final minute = local.minute.toString().padLeft(2, '0');
+  final period = local.hour >= 12 ? 'PM' : 'AM';
+  return '${local.month}/${local.day}/${local.year} $hour:$minute $period';
 }
 
 class FacultyLocation {
@@ -355,7 +546,7 @@ class ScheduleEntry {
     required this.startTime,
     required this.endTime,
     required this.section,
-    required this.semester,
+    required this.term,
     required this.schoolYear,
   });
 
@@ -369,7 +560,7 @@ class ScheduleEntry {
   final String startTime;
   final String endTime;
   final String section;
-  final String semester;
+  final String term;
   final String schoolYear;
 
   factory ScheduleEntry.fromMap(
@@ -423,26 +614,12 @@ class ScheduleEntry {
       section: str(schedule['section']).isEmpty
           ? 'TBD'
           : str(schedule['section']),
-      semester: str(schedule['semester']),
+      term: str(schedule['term']).isNotEmpty
+          ? str(schedule['term'])
+          : str(schedule['semester']),
       schoolYear: str(schedule['school_year']),
     );
   }
-}
-
-class UserRow {
-  const UserRow({
-    required this.uid,
-    required this.username,
-    required this.name,
-    required this.roles,
-    required this.status,
-  });
-
-  final String uid;
-  final String username;
-  final String name;
-  final List<String> roles;
-  final String status;
 }
 
 class LoginScreen extends StatefulWidget {
@@ -453,8 +630,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _email = TextEditingController(text: 'admin@stilocator.local');
-  final _password = TextEditingController(text: 'Admin@12345');
+  final _email = TextEditingController();
+  final _password = TextEditingController();
   bool _loading = false;
   bool _obscure = true;
 
@@ -466,16 +643,27 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _login() async {
+    final email = _email.text.trim();
+    final password = _password.text;
+    final validationMessage = loginValidationMessage(email, password);
+    if (validationMessage != null) {
+      _snack(validationMessage);
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      final email = _email.text.trim();
-      final password = _password.text;
-      final snapshot = await FirebaseDatabase.instance.ref().get();
+      final snapshot = await locatorDatabase.ref().get();
       final data = AppData.from(snapshot.value);
       final user = await authenticateMobileUser(email, password, data.raw);
       if (!mounted) return;
       if (user == null) {
         _snack('Invalid account or inactive user.');
+        return;
+      }
+      if (!user.isFaculty && !user.isStudent) {
+        await locatorAuth.signOut();
+        _snack('The mobile app is available to faculty and students only.');
         return;
       }
       Navigator.of(context).pushReplacement(
@@ -489,93 +677,26 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF3F6FB),
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _LogoHeader(),
-                  const SizedBox(height: 28),
-                  _Panel(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Text(
-                          'Welcome Back',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w900,
-                            color: Palette.text,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Sign in to access STI Locator mobile modules.',
-                          style: TextStyle(color: Palette.muted, height: 1.4),
-                        ),
-                        const SizedBox(height: 24),
-                        TextField(
-                          controller: _email,
-                          keyboardType: TextInputType.emailAddress,
-                          decoration: const InputDecoration(
-                            labelText: 'Email or username',
-                            prefixIcon: Icon(Icons.alternate_email_rounded),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        TextField(
-                          controller: _password,
-                          obscureText: _obscure,
-                          decoration: InputDecoration(
-                            labelText: 'Password',
-                            prefixIcon: const Icon(Icons.lock_outline_rounded),
-                            suffixIcon: IconButton(
-                              onPressed: () =>
-                                  setState(() => _obscure = !_obscure),
-                              icon: Icon(
-                                _obscure
-                                    ? Icons.visibility_rounded
-                                    : Icons.visibility_off_rounded,
-                              ),
-                            ),
-                          ),
-                          onSubmitted: (_) => _login(),
-                        ),
-                        const SizedBox(height: 20),
-                        FilledButton(
-                          onPressed: _loading ? null : _login,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(54),
-                            backgroundColor: Palette.blue,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          child: _loading
-                              ? const SizedBox.square(
-                                  dimension: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  'Sign In',
-                                  style: TextStyle(fontWeight: FontWeight.w800),
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+        top: false,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return _LoginResponsiveLayout(
+              viewport: constraints.biggest,
+              card: _LoginCard(
+                email: _email,
+                password: _password,
+                obscure: _obscure,
+                loading: _loading,
+                onTogglePassword: () => setState(() => _obscure = !_obscure),
+                onLogin: _login,
+                onForgotPassword: () => _snack(
+                  'Contact your school administrator to reset your password.',
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -586,6 +707,641 @@ class _LoginScreenState extends State<LoginScreen> {
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
+}
+
+class _LoginResponsiveLayout extends StatelessWidget {
+  const _LoginResponsiveLayout({required this.viewport, required this.card});
+
+  final Size viewport;
+  final Widget card;
+
+  @override
+  Widget build(BuildContext context) {
+    if (viewport.width >= 1000) return _desktop();
+    return _stacked(tablet: viewport.width >= 600);
+  }
+
+  Widget _desktop() {
+    return Stack(
+      children: [
+        const Positioned.fill(child: _LoginBackdrop()),
+        Positioned.fill(
+          child: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1440),
+                child: Row(
+                  children: [
+                    const Expanded(flex: 11, child: _LoginHero(expanded: true)),
+                    Expanded(
+                      flex: 9,
+                      child: SingleChildScrollView(
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 52,
+                          vertical: 38,
+                        ),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: viewport.height - 76,
+                          ),
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 520),
+                              child: _LoginEntrance(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    card,
+                                    const SizedBox(height: 22),
+                                    const _LoginFooter(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stacked({required bool tablet}) {
+    final maxWidth = tablet ? 680.0 : 480.0;
+    final heroHeight = tablet ? 280.0 : 238.0;
+    final horizontalPadding = tablet ? 52.0 : 22.0;
+    final minimumHeight = tablet ? 820.0 : 760.0;
+
+    return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: SizedBox(
+            height: viewport.height < minimumHeight
+                ? minimumHeight
+                : viewport.height,
+            child: Stack(
+              children: [
+                const Positioned.fill(child: _LoginBackdrop()),
+                Positioned.fill(
+                  child: _LoginEntrance(
+                    child: Column(
+                      children: [
+                        _LoginHero(height: heroHeight, tablet: tablet),
+                        Transform.translate(
+                          offset: const Offset(0, -24),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: horizontalPadding,
+                            ),
+                            child: card,
+                          ),
+                        ),
+                        Transform.translate(
+                          offset: const Offset(0, -8),
+                          child: const _LoginFooter(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoginEntrance extends StatelessWidget {
+  const _LoginEntrance({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOutCubic,
+      tween: Tween(begin: 0, end: 1),
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, 14 * (1 - value)),
+          child: child,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _LoginFooter extends StatelessWidget {
+  const _LoginFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 28),
+      child: Text(
+        'Secure access for STI students and faculty',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: Color(0xFF71809C),
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _LoginBackdrop extends StatelessWidget {
+  const _LoginBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Color(0xFFF3F7FE),
+      child: CustomPaint(painter: _LoginBackdropPainter()),
+    );
+  }
+}
+
+class _LoginHero extends StatelessWidget {
+  const _LoginHero({this.expanded = false, this.tablet = false, this.height});
+
+  final bool expanded;
+  final bool tablet;
+  final double? height;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: expanded ? double.infinity : height ?? 238,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          expanded ? 72 : 24,
+          expanded ? 48 : 34,
+          expanded ? 50 : 24,
+          expanded ? 48 : 44,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: expanded
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                stiLogoAsset,
+                key: const ValueKey('sti-login-logo'),
+                width: expanded
+                    ? 126
+                    : tablet
+                    ? 104
+                    : 88,
+                height: expanded
+                    ? 76
+                    : tablet
+                    ? 64
+                    : 54,
+                fit: BoxFit.contain,
+                semanticLabel: 'STI logo',
+              ),
+            ),
+            SizedBox(height: expanded ? 30 : 18),
+            RichText(
+              key: const ValueKey('sti-locator-title'),
+              textAlign: expanded ? TextAlign.left : TextAlign.center,
+              text: TextSpan(
+                style: TextStyle(
+                  color: Palette.text,
+                  fontSize: expanded ? 42 : 28,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+                children: const [
+                  TextSpan(text: 'STI '),
+                  TextSpan(
+                    text: 'Locator',
+                    style: TextStyle(color: Palette.blue),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              expanded
+                  ? 'A simple way to find faculty, check rooms, and view schedules across campus.'
+                  : 'Campus access, simplified.',
+              textAlign: expanded ? TextAlign.left : TextAlign.center,
+              style: TextStyle(
+                color: const Color(0xFF526581),
+                fontSize: expanded ? 17 : 14,
+                height: 1.55,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            if (expanded) ...[
+              const SizedBox(height: 38),
+              const _LoginFeatures(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LoginFeatures extends StatelessWidget {
+  const _LoginFeatures();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(26, 22, 26, 20),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .92),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFDCE6F3)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12112A4D),
+            blurRadius: 24,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, color: Palette.blue, size: 21),
+              SizedBox(width: 10),
+              Text(
+                'Campus tools',
+                style: TextStyle(
+                  color: Palette.text,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 17),
+          _LoginFeatureRow(
+            icon: Icons.people_alt_outlined,
+            color: Palette.blue,
+            text: 'Faculty location and availability',
+          ),
+          SizedBox(height: 12),
+          _LoginFeatureRow(
+            icon: Icons.calendar_month_outlined,
+            color: Color(0xFF0F9F8F),
+            text: 'Personal class schedules',
+          ),
+          SizedBox(height: 12),
+          _LoginFeatureRow(
+            icon: Icons.meeting_room_outlined,
+            color: Color(0xFF7C3AED),
+            text: 'Current room status',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoginFeatureRow extends StatelessWidget {
+  const _LoginFeatureRow({
+    required this.icon,
+    required this.color,
+    required this.text,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(icon, color: Colors.white, size: 17),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(color: Color(0xFF526581), fontSize: 14),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LoginCard extends StatelessWidget {
+  const _LoginCard({
+    required this.email,
+    required this.password,
+    required this.obscure,
+    required this.loading,
+    required this.onTogglePassword,
+    required this.onLogin,
+    required this.onForgotPassword,
+  });
+
+  final TextEditingController email;
+  final TextEditingController password;
+  final bool obscure;
+  final bool loading;
+  final VoidCallback onTogglePassword;
+  final VoidCallback onLogin;
+  final VoidCallback onForgotPassword;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFDCE4F0)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1A153968),
+            blurRadius: 26,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Welcome Back',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Palette.blue,
+              fontSize: 27,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            'Sign in to continue to your dashboard',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Palette.muted, fontSize: 14),
+          ),
+          const SizedBox(height: 22),
+          const Text(
+            'School email',
+            style: TextStyle(
+              color: Palette.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 7),
+          TextField(
+            controller: email,
+            keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            textInputAction: TextInputAction.next,
+            decoration: _fieldDecoration(
+              hint: 'Enter your email',
+              icon: Icons.alternate_email_rounded,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Password',
+                  style: TextStyle(
+                    color: Palette.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: onForgotPassword,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: Palette.blue,
+                ),
+                child: const Text(
+                  'Forgot password?',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          TextField(
+            controller: password,
+            obscureText: obscure,
+            autofillHints: const [AutofillHints.password],
+            decoration: _fieldDecoration(
+              hint: 'Enter your password',
+              icon: Icons.lock_outline_rounded,
+              suffix: IconButton(
+                tooltip: obscure ? 'Show password' : 'Hide password',
+                onPressed: onTogglePassword,
+                icon: Icon(
+                  obscure
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  color: Palette.muted,
+                  size: 20,
+                ),
+              ),
+            ),
+            onSubmitted: (_) => onLogin(),
+          ),
+          const SizedBox(height: 22),
+          FilledButton.icon(
+            onPressed: loading ? null : onLogin,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(54),
+              backgroundColor: Palette.blue,
+              disabledBackgroundColor: const Color(0xFF9BB9F7),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              elevation: 0,
+            ),
+            icon: loading
+                ? const SizedBox.square(
+                    dimension: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.login_rounded, size: 20),
+            label: Text(
+              loading ? 'Signing in...' : 'Sign In',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.shield_outlined, size: 15, color: Color(0xFF0F9F8F)),
+              SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Protected school account access',
+                  style: TextStyle(
+                    color: Palette.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static InputDecoration _fieldDecoration({
+    required String hint,
+    required IconData icon,
+    Widget? suffix,
+  }) {
+    return InputDecoration(
+      hintText: hint,
+      prefixIcon: Icon(icon, size: 20),
+      suffixIcon: suffix,
+      fillColor: const Color(0xFFF8FAFD),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+    );
+  }
+}
+
+class _LoginBackdropPainter extends CustomPainter {
+  const _LoginBackdropPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rightPanel = Paint()..color = const Color(0xFFE9F9FC);
+    canvas.drawRect(
+      Rect.fromLTWH(size.width * .62, 0, size.width * .38, size.height),
+      rightPanel,
+    );
+
+    final outline = Paint()
+      ..color = const Color(0xFF8DBEFF).withValues(alpha: .2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    final softBlue = Paint()..color = const Color(0xFFDDEEFF);
+    final softMint = Paint()..color = const Color(0xFFC6F5EA);
+    final softYellow = Paint()..color = const Color(0xFFFFEDAA);
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .06, size.height * .08, 48, 48),
+        const Radius.circular(7),
+      ),
+      softBlue,
+    );
+    canvas.drawCircle(
+      Offset(size.width * .12, size.height * .24),
+      11,
+      Paint()..color = const Color(0xFFFFDCE3),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .31, size.height * .72, 64, 64),
+        const Radius.circular(8),
+      ),
+      outline,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .67, size.height * .09, 28, 28),
+        const Radius.circular(6),
+      ),
+      Paint()..color = const Color(0xFFEEDCFF),
+    );
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .88, size.height * .17, 70, 70),
+        const Radius.circular(8),
+      ),
+      outline,
+    );
+    canvas.drawCircle(
+      Offset(size.width * .91, size.height * .23),
+      35,
+      softBlue,
+    );
+    canvas.drawCircle(
+      Offset(size.width * .95, size.height * .14),
+      19,
+      softYellow,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .925, size.height * .28, 52, 52),
+        const Radius.circular(7),
+      ),
+      softMint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .04, size.height * .7, 86, 86),
+        const Radius.circular(8),
+      ),
+      outline,
+    );
+    canvas.drawCircle(
+      Offset(size.width * .84, size.height * .75),
+      14,
+      softYellow,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * .89, size.height * .72, 72, 72),
+        const Radius.circular(8),
+      ),
+      outline,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class MobileShell extends StatefulWidget {
@@ -600,15 +1356,31 @@ class MobileShell extends StatefulWidget {
 class _MobileShellState extends State<MobileShell> {
   AppData? _data;
   StreamSubscription<DatabaseEvent>? _subscription;
-  String? _module;
+  late AppUser _user;
   int _tabIndex = 0;
+  bool _leaving = false;
 
   @override
   void initState() {
     super.initState();
-    _module = _availableModules.firstOrNull?.id;
-    _subscription = FirebaseDatabase.instance.ref().onValue.listen((event) {
-      setState(() => _data = AppData.from(event.snapshot.value));
+    _user = widget.user;
+    _subscription = locatorDatabase.ref().onValue.listen((event) {
+      if (!mounted || _leaving) return;
+      final data = AppData.from(event.snapshot.value);
+      final refreshedUser = refreshMobileUser(data.raw, _user);
+      if (refreshedUser == null ||
+          (!refreshedUser.isFaculty && !refreshedUser.isStudent)) {
+        _leaving = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) returnToLogin(context);
+        });
+        return;
+      }
+      setState(() {
+        _data = data;
+        _user = refreshedUser;
+        if (!_user.isFaculty) _tabIndex = 0;
+      });
     });
   }
 
@@ -618,194 +1390,76 @@ class _MobileShellState extends State<MobileShell> {
     super.dispose();
   }
 
-  List<ModuleOption> get _availableModules {
-    final all = <ModuleOption>[
-      ModuleOption(
-        'admin',
-        'Admin',
-        Icons.admin_panel_settings_rounded,
-        widget.user.has('access_admin_module'),
-      ),
-      ModuleOption(
-        'faculty',
-        'Faculty',
-        Icons.school_rounded,
-        widget.user.has('access_faculty_module'),
-      ),
-      ModuleOption(
-        'student',
-        'Student',
-        Icons.people_alt_rounded,
-        widget.user.has('access_student_module'),
-      ),
-    ];
-    return all.where((module) => module.enabled).toList();
-  }
-
   @override
   Widget build(BuildContext context) {
     final data = _data;
+    final isFaculty = _user.isFaculty;
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 12,
-        title: Row(
-          children: const [
-            StiLogoSmall(),
-            SizedBox(width: 10),
-            Text('STI Locator', style: TextStyle(fontWeight: FontWeight.w900)),
-          ],
+        titleSpacing: 16,
+        title: const _LogoHeader(compact: true),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(26),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+              child: Text(
+                '${isFaculty ? 'FACULTY' : 'STUDENT'} MODULE',
+                style: const TextStyle(
+                  color: Palette.blue,
+                  fontSize: 10,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
         ),
         actions: [
+          NotificationButton(data: data, user: _user),
           IconButton(
-            onPressed: () => setState(() => _module = null),
-            icon: const Icon(Icons.apps_rounded),
-            tooltip: 'Modules',
-          ),
-          NotificationButton(data: data, userKey: widget.user.uid),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.account_circle_rounded),
-            onSelected: (value) {
-              if (value == 'profile') {
-                showProfile(context, widget.user);
-              }
-              if (value == 'logout') {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                );
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'profile', child: Text('My profile')),
-              PopupMenuDivider(),
-              PopupMenuItem(value: 'logout', child: Text('Sign out')),
-            ],
+            tooltip: 'My profile',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ProfileScreen(user: _user)),
+            ),
+            icon: const CircleAvatar(
+              radius: 18,
+              backgroundColor: Color(0xFFE3ECF8),
+              child: Icon(Icons.person_rounded, color: Palette.muted),
+            ),
           ),
         ],
       ),
       body: data == null
           ? const Center(child: CircularProgressIndicator())
-          : _module == null
-          ? ModuleSelection(
-              modules: _availableModules,
-              onSelect: (module) => setState(() => _module = module.id),
-            )
-          : _buildModule(data),
-      bottomNavigationBar: _module == null ? null : _buildNavigationBar(),
+          : isFaculty
+          ? FacultyMobileView(data: data, tabIndex: _tabIndex, user: _user)
+          : StudentMobileView(data: data),
+      bottomNavigationBar: isFaculty ? _buildFacultyNavigationBar() : null,
     );
   }
 
-  Widget _buildModule(AppData data) {
-    if (_module == 'admin') {
-      return AdminMobileView(data: data);
-    }
-    if (_module == 'faculty') {
-      return FacultyMobileView(
-        data: data,
-        tabIndex: _tabIndex,
-        user: widget.user,
-      );
-    }
-    return StudentMobileView(data: data);
-  }
-
-  NavigationBar? _buildNavigationBar() {
-    final destinations = _module == 'admin'
-        ? const [
-            NavigationDestination(
-              icon: Icon(Icons.dashboard_rounded),
-              label: 'Dashboard',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.meeting_room_rounded),
-              label: 'Rooms',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.people_alt_rounded),
-              label: 'Users',
-            ),
-          ]
-        : _module == 'faculty'
-        ? const [
-            NavigationDestination(
-              icon: Icon(Icons.people_alt_rounded),
-              label: 'Faculty',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.meeting_room_rounded),
-              label: 'Rooms',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.event_note_rounded),
-              label: 'Schedules',
-            ),
-          ]
-        : null;
-    if (destinations == null) return null;
+  NavigationBar _buildFacultyNavigationBar() {
+    const destinations = [
+      NavigationDestination(
+        icon: Icon(Icons.people_alt_rounded),
+        label: 'Faculty',
+      ),
+      NavigationDestination(
+        icon: Icon(Icons.meeting_room_rounded),
+        label: 'Rooms',
+      ),
+      NavigationDestination(
+        icon: Icon(Icons.event_note_rounded),
+        label: 'My Schedule',
+      ),
+    ];
     return NavigationBar(
+      elevation: 8,
       selectedIndex: _tabIndex.clamp(0, destinations.length - 1),
       onDestinationSelected: (index) => setState(() => _tabIndex = index),
       destinations: destinations,
-    );
-  }
-}
-
-class AdminMobileView extends StatelessWidget {
-  const AdminMobileView({super.key, required this.data});
-
-  final AppData data;
-
-  @override
-  Widget build(BuildContext context) {
-    final shell = context.findAncestorStateOfType<_MobileShellState>();
-    final tab = shell?._tabIndex ?? 0;
-    if (tab == 1) return RoomsList(data: data, canManage: true);
-    if (tab == 2) return UsersList(users: data.users);
-    final activeFaculty = data.facultyLocations
-        .where((f) => f.status != 'Offline')
-        .length;
-    final occupiedRooms = data.roomLocations
-        .where((r) => r.status == 'Occupied')
-        .length;
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const _HeroCard(
-          title: 'Admin Dashboard',
-          subtitle: 'Live overview of users, rooms, schedules, and activity.',
-          icon: Icons.dashboard_rounded,
-        ),
-        const SizedBox(height: 16),
-        _StatsGrid(
-          stats: [
-            Stat(
-              'Faculty',
-              '${data.facultyLocations.length}',
-              '$activeFaculty active',
-              Palette.blue,
-            ),
-            Stat(
-              'Rooms',
-              '${data.roomLocations.length}',
-              '$occupiedRooms occupied',
-              Palette.success,
-            ),
-            Stat(
-              'Schedules',
-              '${data.schedules.length}',
-              'records',
-              Palette.purple,
-            ),
-            Stat('Users', '${data.users.length}', 'accounts', Palette.warning),
-          ],
-        ),
-        const SizedBox(height: 18),
-        const Text(
-          'Recent faculty status',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 10),
-        ...data.facultyLocations.take(6).map((f) => FacultyTile(faculty: f)),
-      ],
     );
   }
 }
@@ -825,18 +1479,11 @@ class FacultyMobileView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ownFacultyId = user.facultyId ?? '';
-    final ownSchedules = data.schedules.where((schedule) {
-      final idMatches =
-          ownFacultyId.isNotEmpty && schedule.facultyId == ownFacultyId;
-      final nameMatches =
-          normalizeLookup(schedule.facultyName).isNotEmpty &&
-          normalizeLookup(schedule.facultyName) == normalizeLookup(user.name);
-      return idMatches || nameMatches;
-    }).toList();
+    final ownSchedules = schedulesForFacultyUser(data.schedules, user);
     if (tabIndex == 1) return RoomsList(data: data);
     if (tabIndex == 2) {
       return SchedulesList(
-        schedules: user.isAdmin ? data.schedules : ownSchedules,
+        schedules: ownSchedules,
         emptyMessage: ownFacultyId.isEmpty
             ? 'No faculty profile is linked to this account.'
             : 'No schedules assigned to you.',
@@ -853,7 +1500,7 @@ class StudentMobileView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FacultyStatusList(data: data, showRooms: false);
+    return FacultyStatusList(data: data, showRooms: true, studentView: true);
   }
 }
 
@@ -862,10 +1509,12 @@ class FacultyStatusList extends StatefulWidget {
     super.key,
     required this.data,
     required this.showRooms,
+    this.studentView = false,
   });
 
   final AppData data;
   final bool showRooms;
+  final bool studentView;
 
   @override
   State<FacultyStatusList> createState() => _FacultyStatusListState();
@@ -892,10 +1541,10 @@ class _FacultyStatusListState extends State<FacultyStatusList> {
       padding: const EdgeInsets.all(16),
       children: [
         _HeroCard(
-          title: widget.showRooms ? 'Faculty Tracker' : 'Faculty Status',
-          subtitle: widget.showRooms
-              ? 'Live faculty location and class status.'
-              : 'Tap a faculty card to view their schedule.',
+          title: widget.studentView ? 'Faculty Status' : 'Faculty Tracker',
+          subtitle: widget.studentView
+              ? "View each faculty member's current room and subject."
+              : 'Live faculty location and class status.',
           icon: Icons.people_alt_rounded,
         ),
         const SizedBox(height: 16),
@@ -927,10 +1576,9 @@ class _FacultyStatusListState extends State<FacultyStatusList> {
 }
 
 class RoomsList extends StatelessWidget {
-  const RoomsList({super.key, required this.data, this.canManage = false});
+  const RoomsList({super.key, required this.data});
 
   final AppData data;
-  final bool canManage;
 
   @override
   Widget build(BuildContext context) {
@@ -943,9 +1591,7 @@ class RoomsList extends StatelessWidget {
           icon: Icons.meeting_room_rounded,
         ),
         const SizedBox(height: 16),
-        ...data.roomLocations.map(
-          (room) => RoomTile(room: room, canManage: canManage),
-        ),
+        ...data.roomLocations.map((room) => RoomTile(room: room)),
       ],
     );
   }
@@ -967,102 +1613,13 @@ class SchedulesList extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         const _HeroCard(
-          title: 'Schedules',
-          subtitle: 'Faculty class schedule records.',
+          title: 'My Schedule',
+          subtitle: 'Classes assigned from the active schedule.',
           icon: Icons.event_note_rounded,
         ),
         const SizedBox(height: 16),
         ...schedules.map((schedule) => ScheduleTile(schedule: schedule)),
         if (schedules.isEmpty) EmptyState(message: emptyMessage),
-      ],
-    );
-  }
-}
-
-class UsersList extends StatelessWidget {
-  const UsersList({super.key, required this.users});
-
-  final List<UserRow> users;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const _HeroCard(
-          title: 'Users',
-          subtitle: 'Registered accounts and roles.',
-          icon: Icons.people_alt_rounded,
-        ),
-        const SizedBox(height: 16),
-        ...users.map(
-          (user) => _Panel(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(
-                backgroundColor: Color(0xFFEFF6FF),
-                child: Icon(Icons.person_rounded, color: Palette.blue),
-              ),
-              title: Text(
-                user.name,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              subtitle: Text('${user.username}\n${user.roles.join(', ')}'),
-              trailing: StatusChip(
-                label: user.status,
-                color: user.status == 'active'
-                    ? Palette.success
-                    : Palette.muted,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class ModuleSelection extends StatelessWidget {
-  const ModuleSelection({
-    super.key,
-    required this.modules,
-    required this.onSelect,
-  });
-
-  final List<ModuleOption> modules;
-  final ValueChanged<ModuleOption> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const _HeroCard(
-          title: 'Select Module',
-          subtitle: 'Choose the mobile workspace you want to open.',
-          icon: Icons.apps_rounded,
-        ),
-        const SizedBox(height: 16),
-        ...modules.map(
-          (module) => _Panel(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: CircleAvatar(
-                backgroundColor: const Color(0xFFEFF6FF),
-                child: Icon(module.icon, color: Palette.blue),
-              ),
-              title: Text(
-                module.label,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              subtitle: const Text('Tap to continue'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => onSelect(module),
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -1089,36 +1646,92 @@ class FacultyTile extends StatelessWidget {
         : Palette.muted;
     return _Panel(
       margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: .12),
-          child: Icon(Icons.person_rounded, color: color),
-        ),
-        title: Text(
-          faculty.name,
-          style: const TextStyle(fontWeight: FontWeight.w900),
-        ),
-        subtitle: Text(
-          [
-            faculty.department,
-            faculty.subject,
-            if (showRoom && faculty.room.isNotEmpty) faculty.room,
-            if (faculty.hasClass) '${faculty.startTime} - ${faculty.endTime}',
-          ].where((item) => item.isNotEmpty).join('\n'),
-        ),
-        trailing: StatusChip(label: faculty.statusLabel, color: color),
+      child: InkWell(
         onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _InitialAvatar(name: faculty.name, color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        faculty.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        faculty.department,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Palette.blue),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                StatusChip(label: faculty.statusLabel, color: color),
+              ],
+            ),
+            const Divider(height: 26),
+            _InfoLine(
+              icon: Icons.school_outlined,
+              label: 'Current subject',
+              value: faculty.subject,
+            ),
+            if (showRoom) ...[
+              const SizedBox(height: 10),
+              _InfoLine(
+                icon: Icons.location_on_outlined,
+                label: 'Current room',
+                value: faculty.room.isEmpty ? 'Not in room' : faculty.room,
+              ),
+            ],
+            if (faculty.hasClass) ...[
+              const SizedBox(height: 10),
+              _InfoLine(
+                icon: Icons.schedule_rounded,
+                label: 'Class time',
+                value: '${faculty.startTime} - ${faculty.endTime}',
+              ),
+            ],
+            if (onTap != null) ...[
+              const Divider(height: 26),
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(
+                    'View schedule',
+                    style: TextStyle(
+                      color: Palette.blue,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(width: 4),
+                  Icon(Icons.chevron_right_rounded, color: Palette.blue),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 }
 
 class RoomTile extends StatelessWidget {
-  const RoomTile({super.key, required this.room, required this.canManage});
+  const RoomTile({super.key, required this.room});
 
   final RoomLocation room;
-  final bool canManage;
 
   @override
   Widget build(BuildContext context) {
@@ -1131,47 +1744,55 @@ class RoomTile extends StatelessWidget {
     return _Panel(
       margin: const EdgeInsets.only(bottom: 10),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: CircleAvatar(
-              backgroundColor: color.withValues(alpha: .12),
-              child: Icon(Icons.meeting_room_rounded, color: color),
-            ),
-            title: Text(
-              room.room,
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-            subtitle: Text(
-              '${room.building}\n${room.floor}${room.occupants.isNotEmpty ? '\n${room.occupants.map((o) => o.name).join(', ')}' : ''}',
-            ),
-            trailing: StatusChip(label: room.status, color: color),
+          Row(
+            children: [
+              _IconBox(icon: Icons.meeting_room_rounded, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      room.room,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      [
+                        room.building,
+                        room.floor,
+                      ].where((value) => value.isNotEmpty).join(' • '),
+                      style: const TextStyle(color: Palette.muted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              StatusChip(label: room.status, color: color),
+            ],
           ),
-          if (canManage)
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: ['Available', 'Reserved', 'Under Maintenance'].map((
-                status,
-              ) {
-                return OutlinedButton(
-                  onPressed: () => FirebaseDatabase.instance
-                      .ref('rooms/${room.id}/room_status')
-                      .set(status),
-                  child: Text(
-                    status == 'Under Maintenance' ? 'Maintenance' : status,
-                  ),
-                );
-              }).toList(),
+          if (room.occupants.isNotEmpty) ...[
+            const Divider(height: 26),
+            _InfoLine(
+              icon: Icons.person_outline_rounded,
+              label: 'Currently using room',
+              value: room.occupants.map((o) => o.name).join(', '),
             ),
+          ],
         ],
       ),
     );
   }
 }
 
-class ScheduleTile extends StatelessWidget {
-  const ScheduleTile({super.key, required this.schedule});
+// Kept isolated for compatibility with older widget snapshots.
+// ignore: unused_element
+class _LegacyScheduleTile extends StatelessWidget {
+  const _LegacyScheduleTile({required this.schedule});
 
   final ScheduleEntry schedule;
 
@@ -1200,6 +1821,86 @@ class ScheduleTile extends StatelessWidget {
             fontWeight: FontWeight.w800,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class ScheduleTile extends StatelessWidget {
+  const ScheduleTile({super.key, required this.schedule});
+
+  final ScheduleEntry schedule;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _IconBox(
+                icon: Icons.event_available_rounded,
+                color: Palette.blue,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      schedule.subject,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      schedule.facultyName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Palette.muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 26),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MetaChip(icon: Icons.today_rounded, label: schedule.day),
+              _MetaChip(icon: Icons.groups_outlined, label: schedule.section),
+              _MetaChip(
+                icon: Icons.meeting_room_outlined,
+                label: schedule.room,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(Icons.schedule_rounded, size: 18, color: Palette.blue),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  '${schedule.startTime} - ${schedule.endTime}',
+                  style: const TextStyle(
+                    color: Palette.blue,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1254,77 +1955,435 @@ class SearchAndStatus extends StatelessWidget {
 }
 
 class NotificationButton extends StatefulWidget {
-  const NotificationButton({
-    super.key,
-    required this.data,
-    required this.userKey,
-  });
+  const NotificationButton({super.key, required this.data, required this.user});
 
   final AppData? data;
-  final String userKey;
+  final AppUser user;
 
   @override
   State<NotificationButton> createState() => _NotificationButtonState();
 }
 
-class _NotificationButtonState extends State<NotificationButton> {
-  String _read = '';
+class ProfileScreen extends StatelessWidget {
+  const ProfileScreen({super.key, required this.user});
 
-  String get _key {
-    final update = widget.data?.lastScheduleUpdate;
-    if (update == null) return '';
-    return '${update['time']}|${update['import_batch_id']}|${update['deleted_import_batch_id']}';
+  final AppUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Profile')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+        children: [
+          _Panel(
+            child: Column(
+              children: [
+                _InitialAvatar(name: user.name, color: Palette.blue, size: 72),
+                const SizedBox(height: 14),
+                Text(
+                  user.name,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  user.username,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Palette.muted),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: user.roleIds
+                      .map(
+                        (role) => StatusChip(
+                          label: '${role[0].toUpperCase()}${role.substring(1)}',
+                          color: Palette.blue,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Account Information',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 18),
+                _InfoLine(
+                  icon: Icons.badge_outlined,
+                  label: 'User ID',
+                  value: user.uid,
+                ),
+                const SizedBox(height: 14),
+                _InfoLine(
+                  icon: Icons.alternate_email_rounded,
+                  label: 'Username',
+                  value: user.username,
+                ),
+                if ((user.facultyId ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  _InfoLine(
+                    icon: Icons.school_outlined,
+                    label: 'Faculty ID',
+                    value: user.facultyId!,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: () => returnToLogin(context),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Palette.danger,
+              side: const BorderSide(color: Palette.danger),
+              minimumSize: const Size.fromHeight(50),
+            ),
+            icon: const Icon(Icons.logout_rounded),
+            label: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IconBox extends StatelessWidget {
+  const _IconBox({required this.icon, required this.color, this.size = 46});
+
+  final IconData icon;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .09),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, color: color, size: size * .48),
+    );
+  }
+}
+
+class _InitialAvatar extends StatelessWidget {
+  const _InitialAvatar({
+    required this.name,
+    required this.color,
+    this.size = 48,
+  });
+
+  final String name;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    final initials = parts
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .11),
+        shape: BoxShape.circle,
+      ),
+      child: Text(
+        initials.isEmpty ? '?' : initials,
+        style: TextStyle(
+          color: color,
+          fontSize: size * .34,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoLine extends StatelessWidget {
+  const _InfoLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: Palette.blue),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label.toUpperCase(),
+                style: const TextStyle(
+                  color: Palette.muted,
+                  fontSize: 10,
+                  letterSpacing: .8,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value.isEmpty ? 'Not available' : value,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F6FA),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: Palette.muted),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Palette.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationButtonState extends State<NotificationButton> {
+  final GlobalKey _buttonKey = GlobalKey();
+  final Set<String> _read = {};
+  final Set<String> _cleared = {};
+
+  List<Map<String, dynamic>> get _notifications =>
+      notificationsForUser(widget.data, widget.user);
+
+  List<Map<String, dynamic>> get _visibleNotifications => _notifications
+      .where(
+        (item) =>
+            !_cleared.contains(notificationKey(item, widget.user.mobileRole)),
+      )
+      .toList();
+
+  void _markAllRead() {
+    setState(() {
+      _read.addAll(
+        _visibleNotifications.map(
+          (item) => notificationKey(item, widget.user.mobileRole),
+        ),
+      );
+    });
+  }
+
+  void _clearAll() {
+    setState(() {
+      final keys = _visibleNotifications.map(
+        (item) => notificationKey(item, widget.user.mobileRole),
+      );
+      _cleared.addAll(keys);
+      _read.addAll(_cleared);
+    });
+  }
+
+  Future<void> _openNotifications() async {
+    final button = _buttonKey.currentContext?.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (button == null || overlay == null) return;
+    final offset = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final items = _visibleNotifications;
+    final unreadCount = items.where((item) {
+      final key = notificationKey(item, widget.user.mobileRole);
+      return !_read.contains(key);
+    }).length;
+
+    await showMenu<void>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(
+          offset.dx + button.size.width - 360,
+          offset.dy + button.size.height + 4,
+          360,
+          0,
+        ),
+        Offset.zero & overlay.size,
+      ),
+      constraints: const BoxConstraints(minWidth: 320, maxWidth: 360),
+      items: [
+        PopupMenuItem<void>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Notifications',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Mark all as read',
+                        onPressed: unreadCount == 0
+                            ? null
+                            : () {
+                                Navigator.of(context).pop();
+                                _markAllRead();
+                              },
+                        icon: const Icon(Icons.done_all_rounded, size: 20),
+                      ),
+                      IconButton(
+                        tooltip: 'Clear notifications',
+                        onPressed: items.isEmpty
+                            ? null
+                            : () {
+                                Navigator.of(context).pop();
+                                _clearAll();
+                              },
+                        icon: const Icon(Icons.clear_all_rounded, size: 20),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                if (items.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 30),
+                    child: Text(
+                      'No notifications to display.',
+                      style: TextStyle(color: Palette.muted),
+                    ),
+                  )
+                else
+                  ...items.take(4).map((notification) {
+                    final key = notificationKey(
+                      notification,
+                      widget.user.mobileRole,
+                    );
+                    return _NotificationTile(
+                      notification: notification,
+                      unread: !_read.contains(key),
+                      compact: true,
+                    );
+                  }),
+                const Divider(height: 1),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => NotificationsScreen(
+                            user: widget.user,
+                            data: widget.data,
+                            initialRead: _read,
+                            initialCleared: _cleared,
+                            onStateChanged: (read, cleared) {
+                              if (!mounted) return;
+                              setState(() {
+                                _read
+                                  ..clear()
+                                  ..addAll(read);
+                                _cleared
+                                  ..clear()
+                                  ..addAll(cleared);
+                              });
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 7),
+                      child: Text('See all notifications'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final unread = _key.isNotEmpty && _key != _read;
+    final unread = _visibleNotifications.any((item) {
+      final key = notificationKey(item, widget.user.mobileRole);
+      return !_read.contains(key);
+    });
     return Stack(
       children: [
         IconButton(
+          key: _buttonKey,
           icon: const Icon(Icons.notifications_rounded),
-          onPressed: () {
-            setState(() => _read = _key);
-            showModalBottomSheet(
-              context: context,
-              showDragHandle: true,
-              builder: (_) => Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Notifications',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (widget.data?.lastScheduleUpdate == null)
-                      const Text('No notifications yet.')
-                    else
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const CircleAvatar(
-                          child: Icon(Icons.event_note_rounded),
-                        ),
-                        title: Text(
-                          widget.data!.lastScheduleUpdate!['deleted_import_batch_id'] !=
-                                  null
-                              ? 'Schedule upload removed'
-                              : 'Schedule updated',
-                        ),
-                        subtitle: Text(
-                          'Posted by ${widget.data!.lastScheduleUpdate!['name'] ?? 'System'}\n${widget.data!.lastScheduleUpdate!['time'] ?? ''}',
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
+          tooltip: 'Notifications',
+          onPressed: _openNotifications,
         ),
         if (unread)
           const Positioned(
@@ -1333,6 +2392,228 @@ class _NotificationButtonState extends State<NotificationButton> {
             child: CircleAvatar(radius: 4, backgroundColor: Palette.danger),
           ),
       ],
+    );
+  }
+}
+
+class _NotificationTile extends StatelessWidget {
+  const _NotificationTile({
+    required this.notification,
+    required this.unread,
+    this.compact = false,
+  });
+
+  final Map<String, dynamic> notification;
+  final bool unread;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = str(notification['title']).isEmpty
+        ? 'System update'
+        : str(notification['title']);
+    return Container(
+      color: unread ? Palette.blue.withValues(alpha: .055) : null,
+      padding: EdgeInsets.fromLTRB(
+        16,
+        compact ? 12 : 16,
+        16,
+        compact ? 12 : 16,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 9,
+            height: 9,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color: unread ? Palette.blue : Palette.border,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                if (str(notification['message']).isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    str(notification['message']),
+                    maxLines: compact ? 2 : null,
+                    overflow: compact ? TextOverflow.ellipsis : null,
+                    style: const TextStyle(
+                      color: Palette.muted,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 5),
+                Text(
+                  notificationTimeLabel(notification['time']),
+                  style: const TextStyle(color: Palette.muted, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class NotificationsScreen extends StatefulWidget {
+  const NotificationsScreen({
+    super.key,
+    required this.user,
+    required this.data,
+    required this.initialRead,
+    required this.initialCleared,
+    required this.onStateChanged,
+  });
+
+  final AppUser user;
+  final AppData? data;
+  final Set<String> initialRead;
+  final Set<String> initialCleared;
+  final void Function(Set<String> read, Set<String> cleared) onStateChanged;
+
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends State<NotificationsScreen> {
+  late final Set<String> _read = {...widget.initialRead};
+  late final Set<String> _cleared = {...widget.initialCleared};
+  bool _unreadOnly = false;
+
+  List<Map<String, dynamic>> get _visible {
+    final all = notificationsForUser(widget.data, widget.user).where((item) {
+      final key = notificationKey(item, widget.user.mobileRole);
+      return !_cleared.contains(key);
+    });
+    if (!_unreadOnly) return all.toList();
+    return all
+        .where(
+          (item) =>
+              !_read.contains(notificationKey(item, widget.user.mobileRole)),
+        )
+        .toList();
+  }
+
+  void _sync() => widget.onStateChanged({..._read}, {..._cleared});
+
+  void _markAllRead() {
+    setState(() {
+      _read.addAll(
+        notificationsForUser(
+          widget.data,
+          widget.user,
+        ).map((item) => notificationKey(item, widget.user.mobileRole)),
+      );
+    });
+    _sync();
+  }
+
+  void _clearAll() {
+    setState(() {
+      _cleared.addAll(
+        notificationsForUser(
+          widget.data,
+          widget.user,
+        ).map((item) => notificationKey(item, widget.user.mobileRole)),
+      );
+      _read.addAll(_cleared);
+    });
+    _sync();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _visible;
+    final unreadCount = notificationsForUser(widget.data, widget.user)
+        .where(
+          (item) =>
+              !_read.contains(notificationKey(item, widget.user.mobileRole)),
+        )
+        .length;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        actions: [
+          IconButton(
+            tooltip: 'Mark all as read',
+            onPressed: unreadCount == 0 ? null : _markAllRead,
+            icon: const Icon(Icons.done_all_rounded),
+          ),
+          IconButton(
+            tooltip: 'Clear notifications',
+            onPressed: items.isEmpty ? null : _clearAll,
+            icon: const Icon(Icons.clear_all_rounded),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: Row(
+              children: [
+                ChoiceChip(
+                  label: const Text('All'),
+                  selected: !_unreadOnly,
+                  onSelected: (_) => setState(() => _unreadOnly = false),
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: Text('Unread ($unreadCount)'),
+                  selected: _unreadOnly,
+                  onSelected: (_) => setState(() => _unreadOnly = true),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: items.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.notifications_none_rounded,
+                          size: 44,
+                          color: Palette.muted,
+                        ),
+                        SizedBox(height: 10),
+                        Text('No notifications to display.'),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+                    itemCount: items.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (_, index) {
+                      final item = items[index];
+                      final key = notificationKey(item, widget.user.mobileRole);
+                      return _Panel(
+                        padding: EdgeInsets.zero,
+                        child: _NotificationTile(
+                          notification: item,
+                          unread: !_read.contains(key),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1351,26 +2632,24 @@ class _HeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Palette.navy, Palette.blue]),
-        borderRadius: BorderRadius.circular(22),
+        color: Colors.white,
+        border: Border.all(color: Palette.border),
+        borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
-            color: Palette.blue.withValues(alpha: .16),
-            blurRadius: 20,
-            offset: const Offset(0, 12),
+            color: Palette.navy.withValues(alpha: .05),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 28,
-            backgroundColor: Colors.white.withValues(alpha: .16),
-            child: Icon(icon, color: Colors.white),
-          ),
-          const SizedBox(width: 16),
+          _IconBox(icon: icon, color: Palette.blue, size: 54),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1378,7 +2657,7 @@ class _HeroCard extends StatelessWidget {
                 Text(
                   title,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: Palette.text,
                     fontSize: 22,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1386,10 +2665,7 @@ class _HeroCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFFEAF2FF),
-                    height: 1.35,
-                  ),
+                  style: const TextStyle(color: Palette.muted, height: 1.35),
                 ),
               ],
             ),
@@ -1400,70 +2676,26 @@ class _HeroCard extends StatelessWidget {
   }
 }
 
-class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.stats});
-
-  final List<Stat> stats;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: MediaQuery.of(context).size.width > 700 ? 4 : 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 10,
-      childAspectRatio: 1.35,
-      children: stats
-          .map(
-            (stat) => _Panel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.circle, color: stat.color, size: 12),
-                  const Spacer(),
-                  Text(
-                    stat.value,
-                    style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    stat.label,
-                    style: const TextStyle(
-                      color: Palette.muted,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    stat.detail,
-                    style: const TextStyle(color: Palette.muted, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-}
-
 class _Panel extends StatelessWidget {
-  const _Panel({required this.child, this.margin = EdgeInsets.zero});
+  const _Panel({
+    required this.child,
+    this.margin = EdgeInsets.zero,
+    this.padding = const EdgeInsets.all(16),
+  });
 
   final Widget child;
   final EdgeInsets margin;
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: margin,
-      padding: const EdgeInsets.all(16),
+      padding: padding,
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: Palette.border),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
             color: Palette.navy.withValues(alpha: .04),
@@ -1482,43 +2714,58 @@ class StiLogoSmall extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       height: 36,
       width: 58,
-      decoration: BoxDecoration(
-        color: Palette.yellow,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      alignment: Alignment.center,
-      child: const Text(
-        'STI',
-        style: TextStyle(
-          color: Palette.blue,
-          fontSize: 22,
-          fontWeight: FontWeight.w900,
-        ),
+      child: Image.asset(
+        stiLogoAsset,
+        fit: BoxFit.contain,
+        semanticLabel: 'STI logo',
       ),
     );
   }
 }
 
 class _LogoHeader extends StatelessWidget {
-  const _LogoHeader();
+  const _LogoHeader({this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        StiLogoSmall(),
-        SizedBox(width: 12),
+        const StiLogoSmall(),
+        const SizedBox(width: 10),
         Text(
           'STI Locator',
           style: TextStyle(
-            fontSize: 22,
+            fontSize: compact ? 18 : 22,
             color: Palette.text,
             fontWeight: FontWeight.w900,
           ),
         ),
+        if (isStaging || isLocal) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3BF),
+              border: Border.all(color: const Color(0xFFF4C430)),
+              borderRadius: BorderRadius.circular(5),
+            ),
+            child: const Text(
+              isLocal ? 'LOCAL' : 'STG',
+              style: TextStyle(
+                color: Color(0xFF7A5200),
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: .6,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1565,20 +2812,99 @@ class EmptyState extends StatelessWidget {
   }
 }
 
-class ModuleOption {
-  const ModuleOption(this.id, this.label, this.icon, this.enabled);
-  final String id;
-  final String label;
-  final IconData icon;
-  final bool enabled;
+void returnToLogin(BuildContext context) {
+  Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+    MaterialPageRoute(builder: (_) => const LoginScreen()),
+    (_) => false,
+  );
+  unawaited(_clearFirebaseSession());
 }
 
-class Stat {
-  const Stat(this.label, this.value, this.detail, this.color);
-  final String label;
-  final String value;
-  final String detail;
-  final Color color;
+Future<void> _clearFirebaseSession() async {
+  try {
+    await locatorAuth.signOut().timeout(const Duration(seconds: 3));
+  } catch (_) {
+    // The local session has already ended. A network/auth cleanup failure must
+    // not trap the user inside the authenticated mobile shell.
+  }
+}
+
+AppUser? refreshMobileUser(Map<String, dynamic> raw, AppUser current) {
+  final users = asMap(raw['users']);
+  Map<String, dynamic>? user;
+  String recordKey = '';
+
+  for (final entry in users.entries) {
+    final candidate = asStringMap(entry.value);
+    final candidateId = firstText(candidate, ['user_id', 'uid']);
+    final candidateUsername = firstText(candidate, ['username', 'email']);
+    if (entry.key.toString() == current.uid ||
+        candidateId == current.uid ||
+        (candidateUsername.isNotEmpty &&
+            candidateUsername.toLowerCase() ==
+                current.username.toLowerCase())) {
+      user = candidate;
+      recordKey = entry.key.toString();
+      break;
+    }
+  }
+
+  if (user == null || str(user['status']).toLowerCase() == 'inactive') {
+    return null;
+  }
+
+  final uid = firstText(user, ['user_id', 'uid']).isNotEmpty
+      ? firstText(user, ['user_id', 'uid'])
+      : recordKey;
+  final username = firstText(user, ['username', 'email']).isNotEmpty
+      ? firstText(user, ['username', 'email'])
+      : current.username;
+  final roleIds = listOfStrings(user['role_ids']).isEmpty
+      ? [str(user['role_id']).isEmpty ? 'student' : str(user['role_id'])]
+      : listOfStrings(user['role_ids']);
+  final permissions = permissionMapFromRoles(
+    asMap(raw['role_permissions']),
+    roleIds,
+  );
+  for (final record in asMap(raw['user_permissions']).values) {
+    final override = asStringMap(record);
+    if (str(override['user_id']) == uid) {
+      permissions[str(override['permission_id'])] = override['allowed'] == true;
+    }
+  }
+
+  final faculties = asMap(raw['faculties']);
+  final students = asMap(raw['students']);
+  final facultyProfile = findProfile(faculties, uid, username, [
+    'user_id',
+    'email',
+    'username',
+    'faculty_id',
+  ]);
+  final studentProfile = findProfile(students, uid, username, [
+    'user_id',
+    'email',
+    'username',
+    'student_number',
+    'student_id',
+  ]);
+  final profile = facultyProfile.isNotEmpty
+      ? facultyProfile
+      : studentProfile.isNotEmpty
+      ? studentProfile
+      : <String, dynamic>{};
+
+  return AppUser(
+    uid: uid,
+    name: displayName(profile, fallback: username),
+    username: username,
+    roleIds: roleIds,
+    userType: roleIds.firstOrNull ?? 'student',
+    permissions: permissions,
+    facultyId: str(facultyProfile['faculty_id']).isNotEmpty
+        ? str(facultyProfile['faculty_id'])
+        : current.facultyId,
+  );
 }
 
 Future<AppUser?> authenticateMobileUser(
@@ -1586,22 +2912,6 @@ Future<AppUser?> authenticateMobileUser(
   String password,
   Map<String, dynamic> raw,
 ) async {
-  if (login.toLowerCase() == 'admin@stilocator.local' &&
-      password == 'Admin@12345') {
-    return const AppUser(
-      uid: 'admin',
-      name: 'Admin',
-      username: 'admin@stilocator.local',
-      roleIds: ['admin'],
-      userType: 'admin',
-      permissions: {
-        'access_admin_module': true,
-        'access_faculty_module': true,
-        'access_student_module': true,
-      },
-    );
-  }
-
   final users = asMap(raw['users']);
   final roles = asMap(raw['role_permissions']);
   final overrides = asMap(raw['user_permissions']);
@@ -1624,10 +2934,18 @@ Future<AppUser?> authenticateMobileUser(
       return null;
     }
     final storedPassword = str(user['password']);
-    if (storedPassword.isNotEmpty &&
-        storedPassword != 'managed_by_firebase_auth' &&
-        storedPassword != password) {
-      continue;
+    if (storedPassword == 'managed_by_firebase_auth') {
+      try {
+        final authEmail = username.isNotEmpty ? username : str(user['email']);
+        await locatorAuth.signInWithEmailAndPassword(
+          email: authEmail,
+          password: password,
+        );
+      } on FirebaseAuthException {
+        return null;
+      }
+    } else {
+      if (storedPassword.isEmpty || storedPassword != password) continue;
     }
 
     final roleIds = listOfStrings(user['role_ids']).isEmpty
@@ -1769,6 +3087,41 @@ String firstText(Map<String, dynamic> record, List<String> fields) {
 
 String normalizeLookup(String value) =>
     value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+
+List<ScheduleEntry> schedulesForFacultyUser(
+  List<ScheduleEntry> schedules,
+  AppUser user,
+) {
+  final facultyId = (user.facultyId ?? '').trim();
+  if (facultyId.isNotEmpty) {
+    return schedules
+        .where((schedule) => schedule.facultyId == facultyId)
+        .toList();
+  }
+
+  final facultyName = normalizeLookup(user.name);
+  if (facultyName.isEmpty) return [];
+  return schedules
+      .where(
+        (schedule) =>
+            normalizeLookup(schedule.facultyName).isNotEmpty &&
+            normalizeLookup(schedule.facultyName) == facultyName,
+      )
+      .toList();
+}
+
+String? loginValidationMessage(String email, String password) {
+  final normalizedEmail = email.trim();
+  if (normalizedEmail.isEmpty) return 'Enter your school email address.';
+  if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(normalizedEmail)) {
+    return 'Enter a valid school email address.';
+  }
+  if (password.isEmpty) return 'Enter your password.';
+  if (password.length < 6) {
+    return 'Password must contain at least 6 characters.';
+  }
+  return null;
+}
 
 Map<String, dynamic> findById(
   Map<String, dynamic> collection,

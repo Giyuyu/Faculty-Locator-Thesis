@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { FaChevronDown, FaSave, FaUserCircle } from 'react-icons/fa';
+import { FaKey, FaSave, FaSignOutAlt, FaUserCircle } from 'react-icons/fa';
 import { MdApps, MdArrowBack, MdDarkMode, MdLightMode } from 'react-icons/md';
 import { get, ref, update } from 'firebase/database';
 import Swal from 'sweetalert2';
 import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
+import ProfileLink from '../../components/ProfileLink';
+import { getNotificationAudience } from '../../utils/notifications';
 import logo from '../../assets/sti_logo.png';
 import {
   changeCurrentUserPassword,
@@ -31,7 +33,6 @@ function Profile() {
   const location = useLocation();
   const selectedSection = new URLSearchParams(location.search).get('section') === 'theme' ? 'theme' : 'profile';
   const [currentUser, setCurrentUser] = useState(null);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
@@ -194,30 +195,8 @@ function Profile() {
             <Link to="/home" className="rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" aria-label="Modules">
               <MdApps className="h-5 w-5" />
             </Link>
-            <NotificationBell database={database} audience={currentUser.userType} />
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setProfileOpen((open) => !open)}
-                className="flex items-center gap-2"
-                aria-expanded={profileOpen}
-                aria-haspopup="menu"
-              >
-                <FaUserCircle className="h-9 w-9 text-slate-300" />
-                <span className="hidden max-w-44 truncate text-sm font-semibold text-slate-800 dark:text-slate-100 md:inline">{currentUser.name || 'User'}</span>
-                <FaChevronDown className={`h-3 w-3 text-slate-500 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {profileOpen && (
-                <div className="absolute right-0 top-11 z-50 w-56 rounded-sm border border-slate-200 bg-white py-2 text-sm text-slate-600 shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" role="menu">
-                  <Link to="/profile" className="block w-full px-6 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800" role="menuitem">My profile</Link>
-                  <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800" role="menuitem">Change password</button>
-                  <div className="my-2 border-t border-slate-200 dark:border-slate-700" />
-                  <Link to="/profile?section=theme" className="block w-full px-6 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800" role="menuitem">Theme settings</Link>
-                  <button type="button" onClick={handleLogout} className="block w-full px-6 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800" role="menuitem">Sign out</button>
-                </div>
-              )}
-            </div>
+            <NotificationBell database={database} audience={getNotificationAudience(currentUser)} />
+            <ProfileLink user={currentUser} />
           </div>
         </div>
       </header>
@@ -240,6 +219,17 @@ function Profile() {
               Theme settings
             </Link>
           </nav>
+
+          <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+              <FaKey className="h-4 w-4" />
+              Change password
+            </button>
+            <button type="button" onClick={handleLogout} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40">
+              <FaSignOutAlt className="h-4 w-4" />
+              Sign out
+            </button>
+          </div>
         </aside>
 
         <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">

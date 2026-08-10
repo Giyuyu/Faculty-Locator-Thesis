@@ -74,9 +74,12 @@ if errorlevel 1 (
 echo.
 echo Setup complete.
 echo.
-echo Run web app:          run-web.bat
-echo Run mobile web app:   run-mobile-web.bat
-echo Run faculty login:    run-desktop-login.bat
-echo Run admin desktop:    run-desktop-admin.bat
+echo Open launcher menu:   .\run.bat
+echo Run local database:   .\run.bat local-db
+echo Run web locally:      .\run.bat web-local
+echo Run web staging:      .\run.bat web-stg
+echo Run mobile staging:   .\run.bat mobile-stg
+echo Run faculty login:    .\run.bat login
+echo Run admin desktop:    .\run.bat admin
 echo.
 pause
