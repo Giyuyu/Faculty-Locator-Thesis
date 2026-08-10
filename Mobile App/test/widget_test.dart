@@ -82,6 +82,65 @@ void main() {
     expect(refreshed.name, 'Maria Santos');
   });
 
+  test('multi-role users can switch between faculty and student modules', () {
+    const user = AppUser(
+      uid: 'user-1',
+      name: 'Maria Santos',
+      username: 'maria@sti.edu',
+      roleIds: ['faculty', 'student'],
+      permissions: {},
+      userType: 'student',
+      facultyId: 'NVS0001F',
+    );
+
+    expect(user.canAccessFaculty, isTrue);
+    expect(user.canAccessStudent, isTrue);
+    expect(user.hasMultipleMobileModules, isTrue);
+    expect(initialMobileModule(user), 'student');
+    expect(user.forMobileModule('faculty').mobileRole, 'faculty');
+    expect(user.forMobileModule('student').mobileRole, 'student');
+  });
+
+  test('single-role users open their only mobile module', () {
+    const faculty = AppUser(
+      uid: 'faculty-1',
+      name: 'Faculty User',
+      username: 'faculty@sti.edu',
+      roleIds: ['faculty'],
+      permissions: {},
+      userType: 'faculty',
+    );
+    const student = AppUser(
+      uid: 'student-1',
+      name: 'Student User',
+      username: 'student@sti.edu',
+      roleIds: ['student'],
+      permissions: {},
+      userType: 'student',
+    );
+
+    expect(initialMobileModule(faculty), 'faculty');
+    expect(initialMobileModule(student), 'student');
+    expect(faculty.hasMultipleMobileModules, isFalse);
+    expect(student.hasMultipleMobileModules, isFalse);
+  });
+
+  test('missing room building stays blank instead of showing unavailable', () {
+    final data = AppData.from({
+      'rooms': {
+        'M01': {
+          'room_id': 'M01',
+          'room_name': 'M01',
+          'floor': 'Mezzanine',
+          'room_status': 'Available',
+        },
+      },
+    });
+
+    expect(data.roomLocations.single.building, isEmpty);
+    expect(data.roomLocations.single.floor, 'Mezzanine');
+  });
+
   test('inactive database account invalidates the mobile session', () {
     const current = AppUser(
       uid: 'user-1',

@@ -215,8 +215,24 @@ class AppUser {
   bool get isStudent =>
       userType.toLowerCase() == 'student' ||
       roleIds.any((role) => role.toLowerCase() == 'student');
-  String get mobileRole => isFaculty ? 'faculty' : 'student';
+  bool get canAccessFaculty =>
+      isFaculty || permissions['access_faculty_module'] == true;
+  bool get canAccessStudent =>
+      isStudent || permissions['access_student_module'] == true;
+  bool get hasMultipleMobileModules => canAccessFaculty && canAccessStudent;
+  String get mobileRole =>
+      userType.toLowerCase() == 'student' ? 'student' : 'faculty';
   bool has(String permission) => isAdmin || permissions[permission] == true;
+
+  AppUser forMobileModule(String module) => AppUser(
+    uid: uid,
+    name: name,
+    username: username,
+    roleIds: roleIds,
+    permissions: permissions,
+    userType: module,
+    facultyId: facultyId,
+  );
 }
 
 class AppData {
@@ -397,9 +413,7 @@ class AppData {
         room: str(room['room_name']).isNotEmpty
             ? str(room['room_name'])
             : roomId,
-        building: str(room['building']).isEmpty
-            ? 'Not Available'
-            : str(room['building']),
+        building: str(room['building']),
         floor: str(room['floor']).isEmpty
             ? floorFromRoom(str(room['room_name']))
             : str(room['floor']),
@@ -1353,17 +1367,26 @@ class MobileShell extends StatefulWidget {
   State<MobileShell> createState() => _MobileShellState();
 }
 
+String initialMobileModule(AppUser user) {
+  final preferred = user.userType.toLowerCase();
+  if (preferred == 'student' && user.canAccessStudent) return 'student';
+  if (preferred == 'faculty' && user.canAccessFaculty) return 'faculty';
+  return user.canAccessFaculty ? 'faculty' : 'student';
+}
+
 class _MobileShellState extends State<MobileShell> {
   AppData? _data;
   StreamSubscription<DatabaseEvent>? _subscription;
   late AppUser _user;
   int _tabIndex = 0;
+  late String _activeModule;
   bool _leaving = false;
 
   @override
   void initState() {
     super.initState();
     _user = widget.user;
+    _activeModule = initialMobileModule(_user);
     _subscription = locatorDatabase.ref().onValue.listen((event) {
       if (!mounted || _leaving) return;
       final data = AppData.from(event.snapshot.value);
@@ -1379,7 +1402,12 @@ class _MobileShellState extends State<MobileShell> {
       setState(() {
         _data = data;
         _user = refreshedUser;
-        if (!_user.isFaculty) _tabIndex = 0;
+        if (_activeModule == 'faculty' && !_user.canAccessFaculty) {
+          _activeModule = 'student';
+          _tabIndex = 0;
+        } else if (_activeModule == 'student' && !_user.canAccessStudent) {
+          _activeModule = 'faculty';
+        }
       });
     });
   }
@@ -1393,7 +1421,8 @@ class _MobileShellState extends State<MobileShell> {
   @override
   Widget build(BuildContext context) {
     final data = _data;
-    final isFaculty = _user.isFaculty;
+    final isFacultyModule = _activeModule == 'faculty';
+    final moduleUser = _user.forMobileModule(_activeModule);
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
@@ -1405,7 +1434,7 @@ class _MobileShellState extends State<MobileShell> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
               child: Text(
-                '${isFaculty ? 'FACULTY' : 'STUDENT'} MODULE',
+                '${isFacultyModule ? 'FACULTY' : 'STUDENT'} MODULE',
                 style: const TextStyle(
                   color: Palette.blue,
                   fontSize: 10,
@@ -1417,7 +1446,13 @@ class _MobileShellState extends State<MobileShell> {
           ),
         ),
         actions: [
-          NotificationButton(data: data, user: _user),
+          if (_user.hasMultipleMobileModules)
+            IconButton(
+              tooltip: 'Switch module',
+              onPressed: _showModuleSelector,
+              icon: const Icon(Icons.apps_rounded),
+            ),
+          NotificationButton(data: data, user: moduleUser),
           IconButton(
             tooltip: 'My profile',
             onPressed: () => Navigator.of(context).push(
@@ -1433,11 +1468,65 @@ class _MobileShellState extends State<MobileShell> {
       ),
       body: data == null
           ? const Center(child: CircularProgressIndicator())
-          : isFaculty
+          : isFacultyModule
           ? FacultyMobileView(data: data, tabIndex: _tabIndex, user: _user)
           : StudentMobileView(data: data),
-      bottomNavigationBar: isFaculty ? _buildFacultyNavigationBar() : null,
+      bottomNavigationBar: isFacultyModule
+          ? _buildFacultyNavigationBar()
+          : null,
     );
+  }
+
+  Future<void> _showModuleSelector() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Choose module',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Switch between the modules available to your account.',
+                style: TextStyle(color: Palette.muted),
+              ),
+              const SizedBox(height: 18),
+              if (_user.canAccessFaculty)
+                _ModuleChoice(
+                  title: 'Faculty Module',
+                  subtitle: 'Faculty tracker, rooms, and your schedule',
+                  icon: Icons.school_rounded,
+                  selected: _activeModule == 'faculty',
+                  onTap: () => Navigator.pop(context, 'faculty'),
+                ),
+              if (_user.canAccessStudent) ...[
+                const SizedBox(height: 10),
+                _ModuleChoice(
+                  title: 'Student Module',
+                  subtitle: 'View faculty locations and schedules',
+                  icon: Icons.person_search_rounded,
+                  selected: _activeModule == 'student',
+                  onTap: () => Navigator.pop(context, 'student'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || selected == null || selected == _activeModule) return;
+    setState(() {
+      _activeModule = selected;
+      _tabIndex = 0;
+    });
   }
 
   NavigationBar _buildFacultyNavigationBar() {
@@ -1460,6 +1549,78 @@ class _MobileShellState extends State<MobileShell> {
       selectedIndex: _tabIndex.clamp(0, destinations.length - 1),
       onDestinationSelected: (index) => setState(() => _tabIndex = index),
       destinations: destinations,
+    );
+  }
+}
+
+class _ModuleChoice extends StatelessWidget {
+  const _ModuleChoice({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? const Color(0xFFEAF1FF) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(
+          color: selected ? Palette.blue : Palette.border,
+          width: selected ? 1.5 : 1,
+        ),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(15),
+          child: Row(
+            children: [
+              _IconBox(icon: icon, color: Palette.blue),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Palette.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Palette.muted,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                selected
+                    ? Icons.check_circle_rounded
+                    : Icons.chevron_right_rounded,
+                color: selected ? Palette.blue : Palette.muted,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1761,13 +1922,14 @@ class RoomTile extends StatelessWidget {
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    Text(
-                      [
-                        room.building,
-                        room.floor,
-                      ].where((value) => value.isNotEmpty).join(' • '),
-                      style: const TextStyle(color: Palette.muted),
-                    ),
+                    if (room.building.isNotEmpty || room.floor.isNotEmpty)
+                      Text(
+                        [
+                          room.building,
+                          room.floor,
+                        ].where((value) => value.isNotEmpty).join(' • '),
+                        style: const TextStyle(color: Palette.muted),
+                      ),
                   ],
                 ),
               ),
@@ -2040,7 +2202,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       validationMessage!,
-                      style: const TextStyle(color: Palette.danger, fontSize: 12),
+                      style: const TextStyle(
+                        color: Palette.danger,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ],
@@ -2065,7 +2230,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 } else if (newPassword != confirmPassword) {
                   message = 'Passwords do not match.';
                 } else if (newPassword == currentPassword) {
-                  message = 'Use a password different from your current password.';
+                  message =
+                      'Use a password different from your current password.';
                 }
                 if (message != null) {
                   setDialogState(() => validationMessage = message);
@@ -2088,7 +2254,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _changingPassword = true);
     try {
       final record = await _findUserRecord();
-      if (record == null) throw Exception('Your user record could not be found.');
+      if (record == null) {
+        throw Exception('Your user record could not be found.');
+      }
 
       final authUser = locatorAuth.currentUser;
       if (authUser != null) {
@@ -2101,8 +2269,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         await authUser.updatePassword(values[1]);
       } else {
         final storedPassword = str(record.value['password']);
-        if (storedPassword.isEmpty || storedPassword == 'managed_by_firebase_auth') {
-          throw Exception('Sign out and sign in again before changing your password.');
+        if (storedPassword.isEmpty ||
+            storedPassword == 'managed_by_firebase_auth') {
+          throw Exception(
+            'Sign out and sign in again before changing your password.',
+          );
         }
         if (storedPassword != values[0]) {
           throw FirebaseAuthException(
@@ -2123,18 +2294,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } on FirebaseAuthException catch (error) {
       if (!mounted) return;
       final message = switch (error.code) {
-        'invalid-credential' || 'wrong-password' =>
-          'Your current password is incorrect.',
-        'weak-password' => 'Use a stronger password with at least 8 characters.',
-        'too-many-requests' => 'Too many attempts. Wait a moment, then try again.',
-        'network-request-failed' => 'Check your internet connection and try again.',
+        'invalid-credential' ||
+        'wrong-password' => 'Your current password is incorrect.',
+        'weak-password' =>
+          'Use a stronger password with at least 8 characters.',
+        'too-many-requests' =>
+          'Too many attempts. Wait a moment, then try again.',
+        'network-request-failed' =>
+          'Check your internet connection and try again.',
         _ => error.message ?? 'Password update failed.',
       };
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
       );
     } finally {
       if (mounted) setState(() => _changingPassword = false);
@@ -2220,7 +2398,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: _changingPassword ? null : _changePassword,
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+            ),
             icon: _changingPassword
                 ? const SizedBox(
                     width: 18,
@@ -2228,7 +2408,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.key_rounded),
-            label: Text(_changingPassword ? 'Updating password...' : 'Change password'),
+            label: Text(
+              _changingPassword ? 'Updating password...' : 'Change password',
+            ),
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(

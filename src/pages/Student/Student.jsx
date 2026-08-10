@@ -9,17 +9,17 @@ import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { STUDENT_GUIDE_STEPS } from '../../components/QuickStartGuide';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData, getReflectableSchedules } from '../../utils/trackerData';
-import {
-  changeCurrentUserPassword,
-  openThemeSettings,
-  openUserProfile,
-  signOutCurrentUser,
-} from '../../utils/profileActions';
 
 const statusClasses = {
   'In-Class': 'bg-blue-100 text-blue-800 ring-blue-200',
   Available: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
   Offline: 'bg-slate-100 text-slate-700 ring-slate-200',
+};
+
+const statusBorders = {
+  'In-Class': 'border-l-blue-500',
+  Available: 'border-l-emerald-500',
+  Offline: 'border-l-transparent',
 };
 
 function Student() {
@@ -133,10 +133,6 @@ function Student() {
     : [];
   const statuses = ['All', 'In-Class', 'Available', 'Offline'];
 
-  const handleLogout = () => {
-    signOutCurrentUser(navigate);
-  };
-
   const closeQuickGuide = () => {
     localStorage.setItem('quickStartSeen:student', 'true');
     setQuickGuideOpen(false);
@@ -235,30 +231,43 @@ function Student() {
               <h3 className="text-lg font-semibold text-red-700">{error}</h3>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-tour="student-cards">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-tour="student-cards">
               {filteredData.map((faculty) => (
                 <button
                   key={faculty.id}
                   type="button"
                   onClick={() => setSelectedFaculty(faculty)}
-                  className="rounded-2xl border border-white/20 bg-white/80 p-6 text-left shadow-lg backdrop-blur-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+                  className={`min-h-72 overflow-hidden rounded-2xl border border-white/20 border-l-4 bg-white/80 text-left shadow-lg backdrop-blur-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${statusBorders[faculty.status] || statusBorders.Offline}`}
                 >
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-md bg-blue-50 text-blue-600">
-                      <MdPeople className="h-7 w-7" />
+                  <div className="flex h-full flex-col p-6">
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                        <MdPeople className="h-7 w-7" />
+                      </div>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusClasses[faculty.status] || statusClasses.Offline}`}>
+                        {faculty.statusLabel}
+                      </span>
                     </div>
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusClasses[faculty.status] || statusClasses.Offline}`}>
-                      {faculty.statusLabel}
-                    </span>
-                  </div>
 
-                  <h3 className="text-lg font-semibold text-gray-900">{faculty.name}</h3>
-                  <p className="mt-1 text-sm text-gray-600">{faculty.department}</p>
-                  <p className="mt-4 text-sm font-medium text-blue-600">{faculty.subject}</p>
-                  <p className="mt-1 text-xs font-medium text-slate-500">Current room: {faculty.room}</p>
-                  {faculty.hasClass && (
-                    <p className="mt-1 text-xs text-gray-500">{faculty.startTime} - {faculty.endTime}</p>
-                  )}
+                    <h3 className="text-lg font-semibold text-gray-900">{faculty.name}</h3>
+                    <p className="mt-1 truncate text-sm text-gray-600">{faculty.department}</p>
+                    <p className="mt-4 line-clamp-2 min-h-10 text-sm font-medium text-blue-600">{faculty.subject}</p>
+
+                    <div className="mt-auto border-t border-slate-200 pt-4">
+                      <div className="flex items-end justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium uppercase text-slate-400">Current room</p>
+                          <p className="mt-1 truncate text-base font-semibold text-slate-900">{faculty.room}</p>
+                        </div>
+                        {faculty.hasClass && (
+                          <div className="shrink-0 text-right">
+                            <p className="text-xs font-medium uppercase text-slate-400">Class time</p>
+                            <p className="mt-1 text-xs font-semibold text-slate-600">{faculty.startTime} - {faculty.endTime}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
