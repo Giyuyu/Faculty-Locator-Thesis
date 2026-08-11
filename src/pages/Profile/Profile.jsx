@@ -33,6 +33,8 @@ function Profile() {
   const location = useLocation();
   const selectedSection = new URLSearchParams(location.search).get('section') === 'theme' ? 'theme' : 'profile';
   const [currentUser, setCurrentUser] = useState(null);
+  const passwordRequired = new URLSearchParams(location.search).get('password') === 'required'
+    || currentUser?.passwordChangeRequired === true;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
@@ -175,6 +177,14 @@ function Profile() {
 
   const handleLogout = () => signOutCurrentUser(navigate);
 
+  const handleChangePassword = async () => {
+    const changed = await changeCurrentUserPassword(database, currentUser);
+    if (changed) {
+      setCurrentUser((user) => ({ ...user, passwordChangeRequired: false }));
+      navigate('/profile', { replace: true });
+    }
+  };
+
   if (!currentUser) return null;
 
   return (
@@ -221,7 +231,7 @@ function Profile() {
           </nav>
 
           <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button type="button" onClick={() => changeCurrentUserPassword(database, currentUser)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+            <button type="button" onClick={handleChangePassword} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
               <FaKey className="h-4 w-4" />
               Change password
             </button>
@@ -233,6 +243,12 @@ function Profile() {
         </aside>
 
         <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          {passwordRequired && (
+            <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+              <p className="font-semibold">Change your temporary password</p>
+              <p className="mt-1">Your administrator reset this account. Choose Change password before continuing to another module.</p>
+            </div>
+          )}
           {selectedSection === 'profile' ? (
             <>
               <div className="mb-6">

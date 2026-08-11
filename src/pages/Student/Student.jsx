@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MdApps, MdClose, MdPeople, MdSchool } from 'react-icons/md';
 import { FaBook, FaChevronDown, FaUserCircle } from 'react-icons/fa';
-import { onValue, ref } from 'firebase/database';
 import { database } from '../../firebase';
+import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { STUDENT_GUIDE_STEPS } from '../../components/QuickStartGuide';
@@ -61,9 +61,11 @@ function Student() {
   }, [currentUser]);
 
   useEffect(() => {
-    const unsubscribe = onValue(ref(database), (snapshot) => {
+    const unsubscribe = subscribeToPaths(database, [
+      'faculties', 'faculty_status', 'faculty_login_sessions', 'rooms',
+      'subjects', 'schedules', 'schedule_uploads',
+    ], (data) => {
       try {
-        const data = snapshot.val() || {};
         const { facultyLocations: locations } = buildTrackerData(data);
         const subjects = data.subjects || {};
         const rooms = data.rooms || {};

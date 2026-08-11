@@ -1,6 +1,56 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true
+    ".read": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin' && root.child('users').child(auth.uid).child('status').val() === 'active'",
+    ".write": false,
+
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role_id').val() === 'admin')",
+        ".write": "auth != null && ((auth.uid === $uid && newData.exists()) || root.child('users').child(auth.uid).child('role_id').val() === 'admin')",
+        ".validate": "!newData.exists() || (newData.child('user_id').val() === $uid && (newData.child('status').val() === 'active' || newData.child('status').val() === 'inactive' || newData.child('status').val() === 'archived' || newData.child('status').val() === 'deleted') && (!newData.child('password').exists() || newData.child('password').val() === data.child('password').val()) && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || (newData.child('role_id').val() === data.child('role_id').val() && newData.child('role_ids').val() === data.child('role_ids').val() && newData.child('status').val() === data.child('status').val())))"
+      }
+    },
+    "roles": { ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+    "permissions": { ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+    "role_permissions": { ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+    "user_permissions": { ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+
+    "faculties": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'",
+      "$facultyId": {
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || data.child('user_id').val() === auth.uid)",
+        ".validate": "!newData.exists() || ((!data.exists() || newData.child('user_id').val() === data.child('user_id').val()) && newData.child('faculty_id').val() === $facultyId)"
+      }
+    },
+    "public_faculties": {
+      ".read": "auth != null",
+      "$facultyId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'",
+        ".validate": "!newData.exists() || (newData.child('faculty_id').val() === $facultyId && !newData.child('user_id').exists() && !newData.child('email').exists() && !newData.child('rfid').exists() && !newData.child('rfid_id').exists() && !newData.child('card_id').exists())"
+      }
+    },
+    "students": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'",
+      "$studentId": {
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || data.child('user_id').val() === auth.uid)",
+        ".validate": "!newData.exists() || ((!data.exists() || newData.child('user_id').val() === data.child('user_id').val()) && newData.child('student_id').val() === $studentId)"
+      }
+    },
+
+    "rooms": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('users').child(auth.uid).child('role_id').val() === 'device' || root.child('user_permissions').child(auth.uid + '_manage_rooms').child('allowed').val() === true)" },
+    "floors": { ".read": "auth != null", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+    "devices": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('users').child(auth.uid).child('role_id').val() === 'device')" },
+    "subjects": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('user_permissions').child(auth.uid + '_upload_schedules').child('allowed').val() === true)" },
+    "schedules": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('user_permissions').child(auth.uid + '_upload_schedules').child('allowed').val() === true)" },
+    "schedule_uploads": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('user_permissions').child(auth.uid + '_upload_schedules').child('allowed').val() === true)" },
+    "schedule_upload_index": { ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('user_permissions').child(auth.uid + '_upload_schedules').child('allowed').val() === true)" },
+    "lastScheduleUpdate": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('user_permissions').child(auth.uid + '_upload_schedules').child('allowed').val() === true)" },
+
+    "faculty_status": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('users').child(auth.uid).child('role_id').val() === 'device')" },
+    "faculty_login_sessions": { ".read": "auth != null", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('users').child(auth.uid).child('role_id').val() === 'device')" },
+    "notifications": { ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'", ".write": "auth != null && (root.child('users').child(auth.uid).child('role_id').val() === 'admin' || root.child('user_permissions').child(auth.uid + '_upload_schedules').child('allowed').val() === true)" },
+    "account_uploads": { ".read": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+    "account_upload_index": { ".read": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" },
+    "migrations": { ".read": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'", ".write": "auth != null && root.child('users').child(auth.uid).child('role_id').val() === 'admin'" }
   }
 }

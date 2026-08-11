@@ -17,8 +17,9 @@ import {
   MdSearch,
   MdTouchApp,
 } from 'react-icons/md';
-import { onValue, ref } from 'firebase/database';
-import { database } from '../../firebase';
+import { signInAnonymously } from 'firebase/auth';
+import { auth, database } from '../../firebase';
+import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData, facultyDisplayName, getReflectableSchedules } from '../../utils/trackerData';
 
@@ -146,6 +147,25 @@ function Kiosk() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const authenticateKiosk = async () => {
+      try {
+        if (!auth.currentUser) await signInAnonymously(auth);
+        if (active) setAuthReady(true);
+      } catch (authError) {
+        console.error('Unable to authenticate kiosk:', authError);
+        if (active) {
+          setLoading(false);
+          setError('Kiosk access is not configured. Enable Firebase Anonymous Authentication.');
+        }
+      }
+    };
+    authenticateKiosk();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
@@ -188,13 +208,17 @@ function Kiosk() {
   }, [hasStarted]);
 
   useEffect(() => {
-    const unsubscribe = onValue(ref(database), (snapshot) => {
+    if (!authReady) return undefined;
+    const unsubscribe = subscribeToPaths(database, [
+      'public_faculties', 'faculty_status', 'faculty_login_sessions', 'rooms',
+      'subjects', 'schedules', 'schedule_uploads',
+    ], (data) => {
       try {
-        const data = snapshot.val() || {};
-        const trackerData = buildTrackerData(data);
+        const trackerSource = { ...data, faculties: data.public_faculties || {} };
+        const trackerData = buildTrackerData(trackerSource);
         const subjects = data.subjects || {};
         const rooms = data.rooms || {};
-        const faculties = data.faculties || {};
+        const faculties = data.public_faculties || {};
         const facultyById = Object.values(faculties).reduce((acc, faculty) => {
           if (faculty?.faculty_id) acc[faculty.faculty_id] = faculty;
           return acc;
@@ -243,7 +267,7 @@ function Kiosk() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [authReady]);
 
   useEffect(() => {
     if (!selectedFaculty && !selectedRoom) return undefined;

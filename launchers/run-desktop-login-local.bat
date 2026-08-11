@@ -10,6 +10,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "STI_LOCATOR_ENV=local"
+set "STI_LOCATOR_DESKTOP_CLIENT=device"
 echo Starting faculty login [LOCAL]...
 echo Local Firebase must be running: .\run.bat local-db
 call ".venv\Scripts\python.exe" desktop_app\login.py

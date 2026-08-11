@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MdApps, MdPeople, MdSchedule, MdLogout, MdLocationOn } from 'react-icons/md';
 import { FaBars, FaBook, FaChevronDown, FaUserCircle } from 'react-icons/fa';
-import { ref, onValue } from 'firebase/database';
 import { database } from '../../firebase';
+import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { FACULTY_GUIDE_STEPS } from '../../components/QuickStartGuide';
@@ -64,11 +64,12 @@ function Faculty() {
 
   // Fetch live faculty locations from the Python desktop app schema.
   useEffect(() => {
-    const trackerRef = ref(database);
-
-    const unsubscribe = onValue(trackerRef, (snapshot) => {
+    const unsubscribe = subscribeToPaths(database, [
+      'faculties', 'faculty_status', 'faculty_login_sessions', 'rooms',
+      'subjects', 'schedules', 'schedule_uploads',
+    ], (data) => {
       try {
-        const { facultyLocations: locations } = buildTrackerData(snapshot.val() || {});
+        const { facultyLocations: locations } = buildTrackerData(data);
         setFacultyLocations(locations);
         setLoading(false);
         setError(null);

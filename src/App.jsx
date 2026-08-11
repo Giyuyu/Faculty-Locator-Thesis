@@ -1,6 +1,7 @@
 // App.js
 import React, { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import ProtectedRoute from './components/ProtectedRoute';
 
 const Landing = lazy(() => import('./pages/Landing/Landing'));
 const Home = lazy(() => import('./pages/Home/Home'));
@@ -21,16 +22,16 @@ function App() {
         <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><div className="text-xl">Loading...</div></div>}>
           <Routes>
             <Route path="/" element={<Landing />} />
-            <Route path="/home" element={<Home />} />
+            <Route path="/home" element={<ProtectedRoute><Home /></ProtectedRoute>} />
             <Route path="/login" element={<Login />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/notifications" element={<Notifications />} />
+            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
             <Route path="/signup" element={<Navigate to="/login" replace />} />
-            <Route path="/student" element={<Student />} />
-            <Route path="/faculty" element={<Faculty />} />
-            <Route path="/faculty-schedules" element={<FacultySchedules />} />
-            <Route path="/room-tracker" element={<RoomTracker />} />
-            <Route path="/admin" element={<Admin />} />
+            <Route path="/student" element={<ProtectedRoute permission="access_student_module"><Student /></ProtectedRoute>} />
+            <Route path="/faculty" element={<ProtectedRoute permission="access_faculty_module"><Faculty /></ProtectedRoute>} />
+            <Route path="/faculty-schedules" element={<ProtectedRoute permission="view_schedules"><FacultySchedules /></ProtectedRoute>} />
+            <Route path="/room-tracker" element={<ProtectedRoute permission="access_faculty_module"><RoomTracker /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute permission="access_admin_module"><Admin /></ProtectedRoute>} />
             <Route path="/kiosk" element={<Kiosk />} />
           </Routes>
         </Suspense>

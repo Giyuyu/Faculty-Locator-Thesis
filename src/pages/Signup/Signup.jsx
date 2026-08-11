@@ -288,7 +288,6 @@ function Signup() {
       const userRecord = {
         user_id: user.uid,
         username: formData.email,
-        password: 'managed_by_firebase_auth',
         role_id: roleId,
         status,
         created_date: createdDate

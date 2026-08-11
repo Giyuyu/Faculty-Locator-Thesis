@@ -2,6 +2,9 @@
   "name": "practice",
   "private": true,
   "version": "0.0.0",
+  "engines": {
+    "node": "22.x"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite --mode staging",
@@ -15,6 +18,7 @@
     "local:db": "firebase emulators:start --project sti-locator-local --only auth,database",
     "local:seed": "node scripts/seed-local-firebase.js",
     "local:check": "python scripts/check-local-firebase.py",
+    "security:migrate-data": "node scripts/security-migrate-data.js",
     "test:smoke": "node scripts/run-smoke-command.js",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -22,6 +26,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.1.17",
     "firebase": "^12.7.0",
+    "firebase-admin": "^13.6.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-icons": "^5.5.0",
@@ -29,7 +34,7 @@
     "sass": "^1.89.2",
     "sweetalert2": "^11.26.3",
     "tailwindcss": "^4.1.17",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
@@ -39,9 +44,16 @@
     "eslint": "^9.29.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
-    "firebase-tools": "^14.12.0",
+    "firebase-tools": "^15.26.0",
     "globals": "^16.2.0",
     "playwright-core": "^1.62.1",
     "vite": "^7.0.0"
+  },
+  "overrides": {
+    "@google-cloud/storage": "7.22.0",
+    "gaxios": "7.3.0",
+    "retry-request": "9.0.0",
+    "teeny-request": "11.0.0",
+    "uuid": "11.1.1"
   }
 }

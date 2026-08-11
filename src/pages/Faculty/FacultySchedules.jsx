@@ -18,6 +18,8 @@ import {
   signOutCurrentUser,
 } from '../../utils/profileActions';
 
+const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
+
 let debugLogs = '';
 
 const sanitizeId = (value) => String(value || '')
@@ -753,6 +755,15 @@ function FacultySchedules() {
 
     if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls') && !file.name.endsWith('.xlsm')) {
       setImportError('Please select an Excel file (.xlsx, .xls, or .xlsm)');
+      setScheduleWorkbookPreview(null);
+      setSelectedSchedulePreviewSheet('');
+      setShowScheduleDocumentPreview(false);
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_FILE_BYTES) {
+      event.target.value = '';
+      setImportError('The selected file exceeds the 10 MB upload limit.');
       setScheduleWorkbookPreview(null);
       setSelectedSchedulePreviewSheet('');
       setShowScheduleDocumentPreview(false);

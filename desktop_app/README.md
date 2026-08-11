@@ -18,6 +18,11 @@ From the repository root:
 .\setup.bat
 ```
 
+Copy `.env.desktop.example` to `.env.desktop.local` and configure the Firebase
+Authentication accounts for each environment before running staging or
+production. See `docs/security-hardening.md`. The local emulator credentials are
+already documented in the example file.
+
 ## Run
 
 ```bat
