@@ -28,6 +28,36 @@ FirebaseAuth get locatorAuth =>
 FirebaseDatabase get locatorDatabase =>
     FirebaseDatabase.instanceFor(app: locatorFirebaseApp);
 
+const mobileDataPaths = <String>[
+  'role_permissions',
+  'user_permissions',
+  'faculties',
+  'students',
+  'faculty_status',
+  'faculty_login_sessions',
+  'rooms',
+  'subjects',
+  'schedules',
+  'schedule_uploads',
+  'notifications',
+  'lastScheduleUpdate',
+];
+
+Future<Map<String, dynamic>> loadMobileData() async {
+  final uid = locatorAuth.currentUser?.uid;
+  if (uid == null) throw StateError('Firebase Authentication is required.');
+  final entries = await Future.wait(
+    mobileDataPaths.map((path) async {
+      final snapshot = await locatorDatabase.ref(path).get();
+      return MapEntry(path, snapshot.value);
+    }),
+  );
+  final result = Map<String, dynamic>.fromEntries(entries);
+  final userSnapshot = await locatorDatabase.ref('users/$uid').get();
+  result['users'] = {uid: userSnapshot.value};
+  return result;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final firebaseOptions = isLocal
@@ -667,9 +697,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _loading = true);
     try {
-      final snapshot = await locatorDatabase.ref().get();
-      final data = AppData.from(snapshot.value);
-      final user = await authenticateMobileUser(email, password, data.raw);
+      await locatorAuth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final raw = await loadMobileData();
+      final data = AppData.from(raw);
+      final authUid = locatorAuth.currentUser?.uid ?? '';
+      final authenticatedRecord = asStringMap(asMap(raw['users'])[authUid]);
+      if (authenticatedRecord['password_change_required'] == true) {
+        await locatorAuth.signOut();
+        if (!mounted) return;
+        _snack('Change your temporary password from the web profile before using the mobile app.');
+        return;
+      }
+      final user = await authenticateMobileUser(email, data.raw);
       if (!mounted) return;
       if (user == null) {
         _snack('Invalid account or inactive user.');
@@ -683,6 +725,16 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => MobileShell(user: user)),
       );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      final message = switch (error.code) {
+        'invalid-credential' || 'wrong-password' || 'user-not-found' =>
+          'Invalid email or password.',
+        'too-many-requests' => 'Too many attempts. Try again later.',
+        'network-request-failed' => 'Check your connection and try again.',
+        _ => error.message ?? 'Unable to sign in.',
+      };
+      _snack(message);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1376,20 +1428,35 @@ String initialMobileModule(AppUser user) {
 
 class _MobileShellState extends State<MobileShell> {
   AppData? _data;
-  StreamSubscription<DatabaseEvent>? _subscription;
+  final List<StreamSubscription<DatabaseEvent>> _subscriptions = [];
   late AppUser _user;
   int _tabIndex = 0;
   late String _activeModule;
   bool _leaving = false;
+  bool _reloading = false;
 
   @override
   void initState() {
     super.initState();
     _user = widget.user;
     _activeModule = initialMobileModule(_user);
-    _subscription = locatorDatabase.ref().onValue.listen((event) {
+    final watchedPaths = [
+      ...mobileDataPaths,
+      'users/${locatorAuth.currentUser?.uid ?? widget.user.uid}',
+    ];
+    for (final path in watchedPaths) {
+      _subscriptions.add(locatorDatabase.ref(path).onValue.listen((_) {
+        _reloadData();
+      }));
+    }
+  }
+
+  Future<void> _reloadData() async {
+    if (_reloading || !mounted || _leaving) return;
+    _reloading = true;
+    try {
+      final data = AppData.from(await loadMobileData());
       if (!mounted || _leaving) return;
-      final data = AppData.from(event.snapshot.value);
       final refreshedUser = refreshMobileUser(data.raw, _user);
       if (refreshedUser == null ||
           (!refreshedUser.isFaculty && !refreshedUser.isStudent)) {
@@ -1409,12 +1476,16 @@ class _MobileShellState extends State<MobileShell> {
           _activeModule = 'faculty';
         }
       });
-    });
+    } finally {
+      _reloading = false;
+    }
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
     super.dispose();
   }
 
@@ -2139,16 +2210,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _changingPassword = false;
 
   Future<MapEntry<String, Map<String, dynamic>>?> _findUserRecord() async {
-    final snapshot = await locatorDatabase.ref('users').get();
-    final users = asMap(snapshot.value);
-    for (final entry in users.entries) {
-      final record = asStringMap(entry.value);
-      if (entry.key.toString() == widget.user.uid ||
-          firstText(record, ['user_id', 'uid']) == widget.user.uid) {
-        return MapEntry(entry.key.toString(), record);
-      }
-    }
-    return null;
+    final snapshot = await locatorDatabase.ref('users/${widget.user.uid}').get();
+    if (!snapshot.exists) return null;
+    return MapEntry(widget.user.uid, asStringMap(snapshot.value));
   }
 
   Future<void> _changePassword() async {
@@ -2259,32 +2323,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
 
       final authUser = locatorAuth.currentUser;
-      if (authUser != null) {
-        final email = authUser.email ?? widget.user.username;
-        final credential = EmailAuthProvider.credential(
-          email: email,
-          password: values[0],
-        );
-        await authUser.reauthenticateWithCredential(credential);
-        await authUser.updatePassword(values[1]);
-      } else {
-        final storedPassword = str(record.value['password']);
-        if (storedPassword.isEmpty ||
-            storedPassword == 'managed_by_firebase_auth') {
-          throw Exception(
-            'Sign out and sign in again before changing your password.',
-          );
-        }
-        if (storedPassword != values[0]) {
-          throw FirebaseAuthException(
-            code: 'wrong-password',
-            message: 'Your current password is incorrect.',
-          );
-        }
+      if (authUser == null || authUser.uid != widget.user.uid) {
+        throw Exception('Sign out and sign in again before changing your password.');
       }
+      final email = authUser.email ?? widget.user.username;
+      final credential = EmailAuthProvider.credential(
+        email: email,
+        password: values[0],
+      );
+      await authUser.reauthenticateWithCredential(credential);
+      await authUser.updatePassword(values[1]);
 
       await locatorDatabase.ref('users/${record.key}').update({
-        'password': authUser == null ? values[1] : 'managed_by_firebase_auth',
+        'password': null,
         'password_updated_at': DateTime.now().toUtc().toIso8601String(),
       });
       if (!mounted) return;
@@ -3277,9 +3328,10 @@ AppUser? refreshMobileUser(Map<String, dynamic> raw, AppUser current) {
 
 Future<AppUser?> authenticateMobileUser(
   String login,
-  String password,
   Map<String, dynamic> raw,
 ) async {
+  final authenticatedUid = locatorAuth.currentUser?.uid ?? '';
+  if (authenticatedUid.isEmpty) return null;
   final users = asMap(raw['users']);
   final roles = asMap(raw['role_permissions']);
   final overrides = asMap(raw['user_permissions']);
@@ -3292,6 +3344,9 @@ Future<AppUser?> authenticateMobileUser(
     final uid = str(user['user_id']).isNotEmpty
         ? str(user['user_id'])
         : entry.key.toString();
+    if (uid != authenticatedUid && entry.key.toString() != authenticatedUid) {
+      continue;
+    }
     final loginKey = login.toLowerCase();
     if (username.toLowerCase() != login.toLowerCase() &&
         uid.toLowerCase() != loginKey &&
@@ -3301,21 +3356,6 @@ Future<AppUser?> authenticateMobileUser(
     if (str(user['status']).toLowerCase() == 'inactive') {
       return null;
     }
-    final storedPassword = str(user['password']);
-    if (storedPassword == 'managed_by_firebase_auth') {
-      try {
-        final authEmail = username.isNotEmpty ? username : str(user['email']);
-        await locatorAuth.signInWithEmailAndPassword(
-          email: authEmail,
-          password: password,
-        );
-      } on FirebaseAuthException {
-        return null;
-      }
-    } else {
-      if (storedPassword.isEmpty || storedPassword != password) continue;
-    }
-
     final roleIds = listOfStrings(user['role_ids']).isEmpty
         ? [str(user['role_id']).isEmpty ? 'student' : str(user['role_id'])]
         : listOfStrings(user['role_ids']);

@@ -13,4 +13,5 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "STI_LOCATOR_ENV=production"
+set "STI_LOCATOR_DESKTOP_CLIENT=device"
 call ".venv\Scripts\python.exe" desktop_app\login.py

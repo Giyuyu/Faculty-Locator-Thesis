@@ -10,6 +10,13 @@ const databaseBase = `http://${host}:${databasePort}`;
 
 const accounts = [
   {
+    email: 'device.local@sti.edu',
+    password: 'Device@12345',
+    role: 'device',
+    firstName: 'Local',
+    lastName: 'Desktop Device',
+  },
+  {
     email: 'admin@sti.edu',
     password: 'Admin@12345',
     role: 'admin',
@@ -39,6 +46,7 @@ const roles = {
   admin: { role_id: 'admin', role_name: 'Admin' },
   faculty: { role_id: 'faculty', role_name: 'Faculty' },
   student: { role_id: 'student', role_name: 'Student' },
+  device: { role_id: 'device', role_name: 'Desktop Device' },
 };
 
 const permissions = [
@@ -63,16 +71,19 @@ const rolePermissions = {
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function waitForEmulators() {
-  for (let attempt = 1; attempt <= 60; attempt += 1) {
+  for (let attempt = 1; attempt <= 240; attempt += 1) {
     try {
-      const response = await fetch(`${databaseBase}/.json?ns=${databaseNamespace}`);
-      if (response.ok) return;
+      const [databaseResponse, authResponse] = await Promise.all([
+        fetch(`${databaseBase}/.json?ns=${databaseNamespace}`),
+        fetch(`http://${host}:${authPort}/emulator/v1/projects/${projectId}/config`),
+      ]);
+      if (databaseResponse.status && authResponse.ok) return;
     } catch {
       // The launcher starts this script before the emulator process is ready.
     }
     await sleep(500);
   }
-  throw new Error('Local Firebase emulators did not become ready within 30 seconds.');
+  throw new Error('Local Firebase Auth and Database emulators did not become ready within 120 seconds.');
 }
 
 async function authRequest(action, body) {
@@ -111,7 +122,9 @@ function databaseUrl(path = '') {
 }
 
 async function databaseGet(path) {
-  const response = await fetch(databaseUrl(path));
+  const response = await fetch(databaseUrl(path), {
+    headers: { Authorization: 'Bearer owner' },
+  });
   if (!response.ok) throw new Error(`Could not read local database path: ${path}`);
   return response.json();
 }
@@ -120,7 +133,10 @@ async function putIfMissing(path, value) {
   if ((await databaseGet(path)) !== null) return false;
   const response = await fetch(databaseUrl(path), {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer owner',
+    },
     body: JSON.stringify(value),
   });
   if (!response.ok) throw new Error(`Could not seed local database path: ${path}`);
@@ -166,7 +182,6 @@ async function seedAccount(account) {
     user_id: uid,
     username: account.email,
     email: account.email,
-    password: 'managed_by_firebase_auth',
     role_id: account.role,
     role_ids: [account.role],
     status: 'active',
@@ -174,7 +189,7 @@ async function seedAccount(account) {
   });
 
   if (account.role === 'faculty') {
-    await putIfMissing(`faculties/${account.facultyId}`, {
+    const facultyRecord = {
       faculty_id: account.facultyId,
       user_id: uid,
       first_name: account.firstName,
@@ -182,6 +197,15 @@ async function seedAccount(account) {
       last_name: account.lastName,
       department: account.department,
       email: account.email,
+      status: 'active',
+    };
+    await putIfMissing(`faculties/${account.facultyId}`, facultyRecord);
+    await putIfMissing(`public_faculties/${account.facultyId}`, {
+      faculty_id: account.facultyId,
+      first_name: account.firstName,
+      middle_name: '',
+      last_name: account.lastName,
+      department: account.department,
       status: 'active',
     });
     await putIfMissing(`faculty_status/${account.facultyId}`, {

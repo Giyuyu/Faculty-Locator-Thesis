@@ -10,3 +10,6 @@ logs/
 *.bat
 *.xlsx
 database-debug.log
+firebase-export-*/
+functions/
+*-firebase-adminsdk-*.json

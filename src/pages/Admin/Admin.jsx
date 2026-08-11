@@ -4,6 +4,7 @@ import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth'
 import { get, onValue, ref, remove, update } from 'firebase/database';
 import { Link, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import Swal from 'sweetalert2';
 import {
   FaBars,
   FaBook,
@@ -34,7 +35,7 @@ import {
   FaUsers,
 } from 'react-icons/fa';
 import { MdApps } from 'react-icons/md';
-import { database, firebaseConfig } from '../../firebase';
+import { auth, database, firebaseConfig } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { ADMIN_GUIDE_STEPS } from '../../components/QuickStartGuide';
@@ -45,6 +46,8 @@ import {
   openUserProfile,
   signOutCurrentUser,
 } from '../../utils/profileActions';
+
+const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
 
 const ROLES = {
   admin: { role_id: 'admin', role_name: 'Admin' },
@@ -226,12 +229,6 @@ function sanitizeId(value) {
   return String(value || '').trim().replace(/[.#$/[\]]/g, '-');
 }
 
-function generateTemporaryPassword() {
-  const randomPart = Math.random().toString(36).slice(2, 8);
-  const numericPart = String(Math.floor(1000 + Math.random() * 9000));
-  return `Temp@${randomPart}${numericPart}`;
-}
-
 function rolePermissionId(roleId, permissionId) {
   return `${roleId}_${permissionId}`;
 }
@@ -358,7 +355,6 @@ function buildUserUpdates(user, form, uploadMeta = null) {
     [`users/${user.uid}`]: {
       user_id: user.uid,
       username: form.email.trim(),
-      password: 'managed_by_firebase_auth',
       role_id: role,
       role_ids: [role],
       status,
@@ -392,15 +388,17 @@ function buildUserUpdates(user, form, uploadMeta = null) {
 
   if (role === 'faculty') {
     const facultyId = sanitizeId(form.facultyId);
-    updates[`faculties/${facultyId}`] = {
+    const publicFaculty = {
       faculty_id: facultyId,
-      user_id: user.uid,
       first_name: firstName,
       middle_name: middleName,
       last_name: lastName,
       department: form.department.trim(),
-      email: form.email.trim(),
       status,
+    };
+    updates[`public_faculties/${facultyId}`] = publicFaculty;
+    updates[`faculties/${facultyId}`] = {
+      ...publicFaculty,
       ...(uploadMeta ? {
         account_upload_id: uploadMeta.uploadId,
         school_year: uploadMeta.schoolYear,
@@ -745,6 +743,7 @@ function Admin() {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [userAdminMessage, setUserAdminMessage] = useState('');
   const [passwordResetToast, setPasswordResetToast] = useState(null);
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [floors, setFloors] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [floorForm, setFloorForm] = useState(INITIAL_FLOOR_FORM);
@@ -1241,6 +1240,13 @@ function Admin() {
   const handleBatchFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (file.size > MAX_UPLOAD_FILE_BYTES) {
+      event.target.value = '';
+      setBatchRows([]);
+      setBatchResult('The selected file exceeds the 10 MB upload limit.');
+      return;
+    }
 
     try {
       const data = await file.arrayBuffer();
@@ -1932,6 +1938,7 @@ function Admin() {
     if (facultyEntry) {
       updates[`faculties/${facultyEntry[0]}/status`] = status;
       updates[`faculties/${facultyEntry[0]}/${timestampField}`] = now;
+      updates[`public_faculties/${facultyEntry[0]}/status`] = status;
     }
 
     if (status === 'active') {
@@ -1956,28 +1963,77 @@ function Admin() {
   };
 
   const handleResetSelectedUserPassword = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || resettingPassword) return;
+    const email = selectedUser.username || selectedUser.email;
+    if (!email) {
+      setUserAdminMessage('This user does not have an email address.');
+      return;
+    }
 
-    const temporaryPassword = generateTemporaryPassword();
-    await update(ref(database), {
-      [`${userRecordPath(selectedUser)}/password`]: temporaryPassword,
-      [`${userRecordPath(selectedUser)}/password_reset_at`]: new Date().toISOString(),
-      [`${userRecordPath(selectedUser)}/password_reset_by`]: currentUser?.uid || 'admin',
+    const confirmation = await Swal.fire({
+      title: 'Reset this password?',
+      text: `A temporary password will replace the current password for ${email}. It will be displayed once and will not be stored in the database.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Reset password',
+      confirmButtonColor: '#2563eb',
     });
+    if (!confirmation.isConfirmed) return;
 
-    const credentials = {
-      email: selectedUser.username,
-      password: temporaryPassword,
-    };
-    setPasswordResetToast(credentials);
-    setUserAdminMessage(`Temporary password generated for ${selectedUser.display_name}.`);
+    setResettingPassword(true);
+    setPasswordResetToast(null);
+    try {
+      const idToken = await auth.currentUser?.getIdToken(true);
+      if (!idToken) throw new Error('Your administrator session has expired. Sign in again.');
+
+      const resetResponse = await fetch('/api/reset-password', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ uid: selectedUser.user_id }),
+      });
+      const credentials = await resetResponse.json().catch(() => ({}));
+      if (!resetResponse.ok) {
+        const resetErrors = {
+          'admin-required': 'Only an active administrator can reset passwords.',
+          'auth-user-not-found': 'No Firebase Authentication account is linked to this user.',
+          'invalid-session': 'Your administrator session has expired. Sign in again.',
+          'reset-too-soon': 'Wait 30 seconds before resetting this account again.',
+          'server-not-configured': 'The secure reset service has not been configured for this environment.',
+          'use-profile-password-change': 'Use Change Password from your profile for your own account.',
+          'user-not-found': 'The selected user no longer exists.',
+        };
+        throw new Error(resetErrors[credentials.error] || 'The password could not be reset.');
+      }
+
+      setPasswordResetToast({
+        email: credentials.email || email,
+        temporaryPassword: credentials.temporaryPassword,
+      });
+      setUserAdminMessage(credentials.auditSaved === false
+        ? 'Temporary password created, but the reset audit metadata could not be saved.'
+        : 'Temporary password created. It is shown only once.');
+      await loadManagedUsers();
+    } catch (error) {
+      const message = String(error?.message || '').replace(/^FirebaseError:\s*/i, '')
+        || 'The password could not be reset.';
+      await Swal.fire('Reset failed', message, 'error');
+    } finally {
+      setResettingPassword(false);
+    }
   };
 
-  const handleCopyResetCredentials = async () => {
+  const copyResetCredentials = async () => {
     if (!passwordResetToast) return;
-    const text = `Email: ${passwordResetToast.email}\nPassword: ${passwordResetToast.password}`;
-    await navigator.clipboard.writeText(text);
-    setUserAdminMessage('Reset credentials copied.');
+    const value = `Email: ${passwordResetToast.email}\nTemporary password: ${passwordResetToast.temporaryPassword}`;
+    try {
+      await navigator.clipboard.writeText(value);
+      setUserAdminMessage('Temporary credentials copied.');
+    } catch {
+      setUserAdminMessage('Clipboard access was blocked. Select and copy the credentials manually.');
+    }
   };
 
   const handleSaveFloor = async (event) => {
@@ -2537,9 +2593,9 @@ function Admin() {
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={selectedUser.status || 'active'} />
-                    <button type="button" onClick={handleResetSelectedUserPassword} className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50">
+                    <button type="button" onClick={handleResetSelectedUserPassword} disabled={resettingPassword} className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60">
                       <FaKey className="h-3.5 w-3.5" />
-                      Reset Password
+                      {resettingPassword ? 'Resetting...' : 'Reset Password'}
                     </button>
                     {selectedUser.status === 'inactive' ? (
                       <button type="button" onClick={() => handleStatusChange(selectedUser.user_id, 'active')} className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
@@ -3064,27 +3120,23 @@ function Admin() {
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 pt-14 text-slate-950">
       {passwordResetToast && (
-        <div className="fixed right-5 top-20 z-[70] w-80 rounded-lg border border-blue-100 bg-white p-4 shadow-2xl shadow-slate-400/30">
+        <div className="fixed right-5 top-20 z-[70] w-[min(24rem,calc(100vw-2.5rem))] rounded-lg border border-blue-100 bg-white p-4 shadow-2xl shadow-slate-400/30">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-slate-950">Password reset ready</p>
-              <p className="mt-1 text-xs text-slate-500">Copy and send these temporary credentials.</p>
+              <p className="text-sm font-semibold text-slate-950">Temporary password created</p>
+              <p className="mt-1 text-xs text-slate-500">Copy it now. Closing this notice permanently hides it.</p>
             </div>
             <button type="button" onClick={() => setPasswordResetToast(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close password reset notice">
               <FaTimes className="h-3.5 w-3.5" />
             </button>
           </div>
           <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-700">
-            <p className="truncate"><span className="font-semibold">Email:</span> {passwordResetToast.email}</p>
-            <p className="mt-1 break-all"><span className="font-semibold">Password:</span> {passwordResetToast.password}</p>
+            <p className="break-all"><span className="font-semibold">Email:</span> {passwordResetToast.email}</p>
+            <p className="mt-2 break-all font-mono"><span className="font-sans font-semibold">Temporary password:</span> {passwordResetToast.temporaryPassword}</p>
           </div>
-          <button
-            type="button"
-            onClick={handleCopyResetCredentials}
-            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-          >
+          <button type="button" onClick={copyResetCredentials} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
             <FaCopy className="h-3.5 w-3.5" />
-            Copy email and password
+            Copy credentials
           </button>
         </div>
       )}

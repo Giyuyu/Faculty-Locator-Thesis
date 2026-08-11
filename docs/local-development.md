@@ -39,6 +39,27 @@ Local data is exported on emulator shutdown and restored the next time it is
 started. Generated records live under `data/local-firebase/` and are ignored by
 Git. The tracked `.gitkeep` only preserves the correct directory after cloning.
 
+Staging and production records are not copied into the emulator. Firebase
+Authentication is also isolated, so production credentials cannot sign in
+locally. Use the seeded local accounts above, or create matching local Auth and
+Realtime Database records through the Emulator UI.
+
+Admin password resets use a server-side Vercel Function so temporary passwords
+never need to be stored in Realtime Database. Run the web app with `vercel dev`
+and configure local server-only Firebase Admin credentials when testing that
+specific reset flow. The regular `web-local` launcher continues to cover all
+client-only emulator features.
+
+For a local reset test, set these variables in the terminal that runs
+`vercel dev`; no service-account key is needed when both emulators are used:
+
+```powershell
+$env:FIREBASE_ADMIN_PROJECT_ID='sti-locator-local'
+$env:FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9099'
+$env:FIREBASE_DATABASE_EMULATOR_HOST='127.0.0.1:9000'
+npx vercel dev
+```
+
 ## Start a Local Client
 
 Open a second PowerShell terminal and run one client:
@@ -85,3 +106,8 @@ Local settings are stored in `.env.localdb`. The local Flutter options are in
 Stop the emulator with `Ctrl+C`, remove the generated files inside
 `data/local-firebase/` but keep `.gitkeep`, then start `local-db` again. The
 sample accounts and base schema will be recreated automatically.
+
+After startup, check `logs/local-firebase-seed.log`. A successful seed ends with
+`Local Firebase seed is ready.` If Auth on port `9099` is missing, stop the local
+backend with `Ctrl+C` and start `.\run.bat local-db` again before opening a
+client.

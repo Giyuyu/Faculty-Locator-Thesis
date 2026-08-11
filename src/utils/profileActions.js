@@ -40,15 +40,7 @@ const findUserRecord = async (database, currentUser) => {
     return { key: userId, value: directSnapshot.val() || {} };
   }
 
-  const usersSnapshot = await get(ref(database, 'users'));
-  if (!usersSnapshot.exists()) return null;
-
-  const match = Object.entries(usersSnapshot.val()).find(([key, value]) => {
-    const record = value || {};
-    return key === userId || record.user_id === userId || record.uid === userId;
-  });
-
-  return match ? { key: match[0], value: match[1] || {} } : null;
+  return null;
 };
 
 const passwordErrorMessage = (error) => {
@@ -104,9 +96,9 @@ export const changeCurrentUserPassword = async (database, currentUser) => {
 
   if (!result.isConfirmed) return;
 
-  const userId = currentUser?.uid || currentUser?.user_id || currentUser?.id;
   const authUser = getAuth().currentUser;
-  if (!userId) {
+  const userId = currentUser?.uid || currentUser?.user_id || currentUser?.id;
+  if (!userId || !authUser || authUser.uid !== userId) {
     Swal.fire('Unable to update', 'Your user record is missing. Please sign in again.', 'error');
     return;
   }
@@ -115,36 +107,27 @@ export const changeCurrentUserPassword = async (database, currentUser) => {
     const userRecord = await findUserRecord(database, currentUser);
     if (!userRecord) throw new Error('Your user record could not be found.');
 
-    if (authUser) {
-      const email = authUser.email || currentUser?.email || currentUser?.username;
-      if (!email) throw new Error('Your account email could not be found.');
-      const credential = EmailAuthProvider.credential(email, result.value.currentPassword);
-      await reauthenticateWithCredential(authUser, credential);
-      await updatePassword(authUser, result.value.newPassword);
-    } else {
-      const storedPassword = String(userRecord.value.password || '');
-      if (!storedPassword || storedPassword === 'managed_by_firebase_auth') {
-        throw new Error('Please sign out and sign in again before changing your password.');
-      }
-      if (storedPassword !== result.value.currentPassword) {
-        const error = new Error('Your current password is incorrect.');
-        error.code = 'auth/wrong-password';
-        throw error;
-      }
-    }
+    const email = authUser.email || currentUser?.email || currentUser?.username;
+    if (!email) throw new Error('Your account email could not be found.');
+    const credential = EmailAuthProvider.credential(email, result.value.currentPassword);
+    await reauthenticateWithCredential(authUser, credential);
+    await updatePassword(authUser, result.value.newPassword);
 
     await update(ref(database), {
-      [`users/${userRecord.key}/password`]: authUser
-        ? 'managed_by_firebase_auth'
-        : result.value.newPassword,
+      [`users/${userRecord.key}/password`]: null,
+      [`users/${userRecord.key}/password_change_required`]: null,
       [`users/${userRecord.key}/password_updated_at`]: new Date().toISOString(),
     });
   } catch (error) {
     Swal.fire('Unable to update', passwordErrorMessage(error), 'error');
-    return;
+    return false;
   }
 
+  const cachedUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+  localStorage.setItem('currentUser', JSON.stringify({ ...cachedUser, passwordChangeRequired: false }));
+  window.dispatchEvent(new CustomEvent('passwordchangecomplete'));
   Swal.fire('Saved', 'Password updated successfully.', 'success');
+  return true;
 };
 
 export const toggleThemeSetting = () => {

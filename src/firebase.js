@@ -22,7 +22,6 @@ const auth = getAuth(app);
 
 // Initialize Realtime Database
 const database = getDatabase(app);
-
 const useFirebaseEmulators = import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
 
 if (useFirebaseEmulators) {

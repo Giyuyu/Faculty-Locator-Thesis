@@ -9,6 +9,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+functions/
 dist
 dist-ssr
 *.local
@@ -16,6 +17,9 @@ dist-ssr
 # Local tools and dependency caches
 .venv/
 .kilo/
+
+# Firebase Admin private keys
+*-firebase-adminsdk-*.json
 
 # Python
 __pycache__/
@@ -53,3 +57,4 @@ Mobile App/firebase-debug.log
 # Persisted Firebase Emulator data (keep the directory, not local records)
 data/local-firebase/*
 !data/local-firebase/.gitkeep
+firebase-export-*/
