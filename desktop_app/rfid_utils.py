@@ -174,7 +174,12 @@ def normalize_rfid_value(value):
     parts = [part for part in parts if part]
     if parts:
         numeric_parts = [part for part in parts if any(ch.isdigit() for ch in part)]
-        selected = max(numeric_parts or parts, key=len)
+        candidates = numeric_parts or parts
+        if len(candidates) > 1 and all(part.isdigit() and len(part) <= 2 for part in candidates):
+            # Some readers emit a UID as spaced bytes, for example "00 04 22 44 61".
+            selected = "".join(candidates)
+        else:
+            selected = max(candidates, key=len)
     else:
         selected = "".join(ch for ch in scan if ch.isalnum())
 
