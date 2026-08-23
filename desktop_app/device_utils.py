@@ -4,7 +4,7 @@ import platform
 import json
 import os
 import base64
-from firebase_config import get_database_ref, initialize_firebase
+from firebase_config import get_database_ref, get_last_error, initialize_firebase
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -16,10 +16,11 @@ def sanitize_id(value):
 class DeviceManager:
     def __init__(self, config_file="room_config.json"):
         self.config_file = config_file if os.path.isabs(config_file) else os.path.join(APP_DIR, config_file)
+        self.last_error = ""
         # Initialize Firebase
         self.firebase_initialized = initialize_firebase()
         if not self.firebase_initialized:
-            print("Warning: Firebase not initialized. Falling back to local storage.")
+            self.last_error = get_last_error()
 
     def encode_device_key(self, device_key):
         """Encode device key to be safe for Firebase paths"""
@@ -144,13 +145,20 @@ class DeviceManager:
 
     def save_device(self, device_data):
         """Save a device record using the Devices schema."""
+        self.last_error = ""
         if self.firebase_initialized:
             try:
                 from firebase_config import set_data
                 path = f"devices/{device_data['device_id']}"
-                return set_data(path, device_data)
+                saved = set_data(path, device_data)
+                if not saved:
+                    self.last_error = get_last_error() or "Firebase rejected the device write."
+                return saved
             except Exception as e:
+                self.last_error = str(e)
                 print(f"Error saving to Firebase: {str(e)}")
+        elif not self.last_error:
+            self.last_error = get_last_error() or "Firebase is not initialized."
         return False
 
     def get_all_devices(self):

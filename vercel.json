@@ -1,5 +1,5 @@
 {
-  "devCommand": "vite --mode localdb",
+  "devCommand": "vite --mode staging",
   "headers": [
     {
       "source": "/(.*)",

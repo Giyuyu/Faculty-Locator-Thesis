@@ -70,4 +70,4 @@ await Firebase.initializeApp(
 );
 ```
 
-Until Firebase config is present, the app safely falls back to local sample data.
+The production and staging Firebase configurations are included with the app.
