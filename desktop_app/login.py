@@ -140,7 +140,7 @@ class LoginSystem:
             room_card, text="Refresh", command=self.refresh_room_assignment,
             bg='#eef4ff', fg='#175cd3', activebackground='#dbe8ff',
             activeforeground='#175cd3', font=('Arial', 9, 'bold'), relief='flat',
-            cursor='hand2', padx=16, pady=8,
+            cursor='hand2', padx=16, pady=8, takefocus=False,
         )
         refresh_button.grid(row=0, column=2, rowspan=2, padx=22)
         self.create_tooltip(refresh_button, "Refresh room assignment from database")
@@ -199,7 +199,7 @@ class LoginSystem:
         self.manual_mode_button = tk.Button(
             access_card, text="Enter Faculty ID manually", command=self.enable_manual_input,
             bg='white', fg='#175cd3', activebackground='white', activeforeground='#004eeb',
-            font=('Arial', 9, 'bold'), relief='flat', cursor='hand2',
+            font=('Arial', 9, 'bold'), relief='flat', cursor='hand2', takefocus=False,
         )
         self.manual_mode_button.grid(row=5, column=0, sticky='w', padx=18, pady=(7, 13))
 
@@ -207,15 +207,15 @@ class LoginSystem:
         button_frame.grid(row=6, column=0, sticky='ew', padx=24, pady=(0, 11))
         button_frame.grid_columnconfigure((0, 1), weight=1)
         self.login_button = tk.Button(
-            button_frame, text="Log In", command=self.login, bg='#1769ff', fg='white',
+            button_frame, text="Log In", command=self.handle_login_button, bg='#1769ff', fg='white',
             activebackground='#0756df', activeforeground='white', font=('Arial', 11, 'bold'),
-            relief='flat', cursor='hand2', pady=11,
+            relief='flat', cursor='hand2', pady=11, takefocus=False,
         )
         self.login_button.grid(row=0, column=0, sticky='ew', padx=(0, 6))
         self.logout_button = tk.Button(
             button_frame, text="Log Out", command=self.logout, bg='#fff1f0', fg='#b42318',
             activebackground='#fee4e2', activeforeground='#b42318', font=('Arial', 11, 'bold'),
-            relief='flat', cursor='hand2', pady=11,
+            relief='flat', cursor='hand2', pady=11, takefocus=False,
         )
         self.logout_button.grid(row=0, column=1, sticky='ew', padx=(6, 0))
 
@@ -470,6 +470,9 @@ class LoginSystem:
             self.input_help_var.set("Loading login data. Scan again shortly.")
             return
         normalized_identifier = normalize_rfid_value(identifier)
+        if len(normalized_identifier) < 3:
+            self.input_help_var.set("Card was not read clearly. Scan again.")
+            return
         if not self.should_accept_scan(normalized_identifier):
             return
 
@@ -590,8 +593,9 @@ class LoginSystem:
             else self.faculty_id_entry.get().strip().upper()
         )
         if not identifier:
-            messagebox.showerror("Error", "Please scan your ID card or enter your Faculty ID")
-            self.focus_identifier_input()
+            if self.input_mode.get() == 'manual':
+                self.input_help_var.set("Enter your Faculty ID to continue.")
+                self.focus_identifier_input()
             return "break"
 
         if self.input_mode.get() == 'rfid':
@@ -602,6 +606,13 @@ class LoginSystem:
 
         self.login(identifier)
         return "break"
+
+    def handle_login_button(self):
+        """Submit only deliberate manual-ID logins; RFID scans submit themselves."""
+        if self.input_mode.get() == 'rfid':
+            self.input_help_var.set("Ready. Scan your ID.")
+            return
+        self.handle_identifier_submit()
 
     def handle_identifier_key_release(self, event=None):
         """Auto-submit keyboard/HID RFID scans that do not send Enter."""
@@ -790,8 +801,11 @@ class LoginSystem:
             self.root.update_idletasks()
 
         if not faculty_id:
-            messagebox.showerror("Error", "Please scan your ID card or enter your Faculty ID")
-            self.focus_identifier_input()
+            if self.input_mode.get() == 'manual':
+                self.input_help_var.set("Enter your Faculty ID to continue.")
+                self.focus_identifier_input()
+            else:
+                self.input_help_var.set("Ready. Scan your ID.")
             self.login_in_progress = False
             return
 
