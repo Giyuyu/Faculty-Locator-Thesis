@@ -1,17 +1,15 @@
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
+import base64
 from device_utils import DeviceManager
 from firebase_config import get_current_environment, get_data, set_data, update_data
 from rfid_utils import SerialRfidListener, load_reader_config, normalize_rfid_value, reader_label
 import datetime
-import os
+from pathlib import Path
 import re
-import sys
 import time
 import threading
-
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def sanitize_id(value):
     safe = re.sub(r'[^a-zA-Z0-9]+', '_', str(value or '').strip().lower()).strip('_')
@@ -75,15 +73,159 @@ class LoginSystem:
             'faculty_login_sessions': {},
         }
         self.cache_ready = False
+        self.cache_refresh_in_progress = False
         self.cache_lock = threading.Lock()
         self.setup_gui()
         self.load_room_assignment()
         self.start_rfid_listener()
         self.refresh_login_cache_async(initial=True)
-        self.root.after(10000, self.periodic_login_cache_refresh)
+        self.root.after(3000, self.periodic_login_cache_refresh)
         self.root.after(3000, self.refresh_rfid_detection)
     
     def setup_gui(self):
+        """Build the modern faculty terminal interface."""
+        self.root = tk.Tk()
+        environment = get_current_environment().upper()
+        self.root.title(f"STI Locator - Faculty Access [{environment}]")
+        self.root.geometry("720x680")
+        self.root.minsize(640, 620)
+        self.root.configure(bg='#f3f6fc')
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=1)
+
+        header = tk.Frame(self.root, bg='#102a56', height=120)
+        header.grid(row=0, column=0, sticky='ew')
+        header.grid_propagate(False)
+        header.grid_columnconfigure(1, weight=1)
+
+        logo_path = Path(__file__).resolve().parent.parent / 'public' / 'sti_logo.png'
+        logo_data = base64.b64encode(logo_path.read_bytes())
+        self.sti_logo_image = tk.PhotoImage(data=logo_data).subsample(18, 18)
+        tk.Label(
+            header, image=self.sti_logo_image, bg='#102a56', borderwidth=0,
+        ).grid(row=0, column=0, rowspan=2, padx=(34, 20), pady=22)
+        tk.Label(
+            header, text="Faculty Access", font=('Arial', 22, 'bold'),
+            bg='#102a56', fg='white',
+        ).grid(row=0, column=1, sticky='sw', pady=(23, 0))
+        tk.Label(
+            header, text="STI Locator desktop terminal", font=('Arial', 10),
+            bg='#102a56', fg='#c9d7ee',
+        ).grid(row=1, column=1, sticky='nw', pady=(2, 23))
+        tk.Label(
+            header, text=environment, font=('Arial', 9, 'bold'), bg='#214675',
+            fg='white', padx=14, pady=7,
+        ).grid(row=0, column=2, rowspan=2, padx=(10, 34))
+
+        content = tk.Frame(self.root, bg='#f3f6fc')
+        content.grid(row=1, column=0, sticky='nsew', padx=34, pady=22)
+        content.grid_columnconfigure(0, weight=1)
+
+        room_card = tk.Frame(content, bg='white', highlightbackground='#dce3ef', highlightthickness=1)
+        room_card.grid(row=0, column=0, sticky='ew', pady=(0, 16))
+        room_card.grid_columnconfigure(1, weight=1)
+        tk.Label(
+            room_card, text="ASSIGNED ROOM", font=('Arial', 9, 'bold'),
+            bg='white', fg='#667085',
+        ).grid(row=0, column=0, sticky='w', padx=22, pady=(17, 4))
+
+        self.room_var = tk.StringVar(self.root)
+        self.room_display = tk.Label(
+            room_card, textvariable=self.room_var, font=('Arial', 19, 'bold'),
+            bg='white', fg='#101828', anchor='w', padx=8, pady=3,
+        )
+        self.room_display.grid(row=1, column=0, sticky='w', padx=14)
+        refresh_button = tk.Button(
+            room_card, text="Refresh", command=self.refresh_room_assignment,
+            bg='#eef4ff', fg='#175cd3', activebackground='#dbe8ff',
+            activeforeground='#175cd3', font=('Arial', 9, 'bold'), relief='flat',
+            cursor='hand2', padx=16, pady=8,
+        )
+        refresh_button.grid(row=0, column=2, rowspan=2, padx=22)
+        self.create_tooltip(refresh_button, "Refresh room assignment from database")
+
+        self.status_var = tk.StringVar(self.root)
+        self.status_label = tk.Label(
+            room_card, textvariable=self.status_var, font=('Arial', 9),
+            bg='white', fg='#667085',
+        )
+        self.status_label.grid(row=2, column=0, columnspan=3, sticky='w', padx=22, pady=(3, 17))
+
+        access_card = tk.Frame(content, bg='white', highlightbackground='#dce3ef', highlightthickness=1)
+        access_card.grid(row=1, column=0, sticky='ew')
+        access_card.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            access_card, text="Sign in to this room", font=('Arial', 17, 'bold'),
+            bg='white', fg='#101828',
+        ).grid(row=0, column=0, sticky='w', padx=24, pady=(20, 4))
+        tk.Label(
+            access_card, text="Scan your RFID card or enter your assigned Faculty ID.",
+            font=('Arial', 10), bg='white', fg='#667085',
+        ).grid(row=1, column=0, sticky='w', padx=24, pady=(0, 16))
+
+        self.input_mode = tk.StringVar(self.root, value='rfid')
+        self.input_label_var = tk.StringVar(self.root, value="RFID SCANNER")
+        self.input_help_var = tk.StringVar(self.root, value=self.get_rfid_help_text())
+        tk.Label(
+            access_card, textvariable=self.input_label_var, font=('Arial', 9, 'bold'),
+            bg='white', fg='#344054',
+        ).grid(row=2, column=0, sticky='w', padx=24, pady=(0, 7))
+
+        entry_style = {
+            'font': ('Arial', 13), 'relief': 'flat', 'highlightbackground': '#cfd8e6',
+            'highlightcolor': '#246bfe', 'highlightthickness': 1,
+        }
+        self.faculty_id_entry = tk.Entry(
+            access_card, bg='#f9fafb', fg='#101828', insertbackground='#101828', **entry_style,
+        )
+        self.faculty_id_entry.grid(row=3, column=0, sticky='ew', padx=24, ipady=11)
+        self.faculty_id_entry.bind('<Return>', self.handle_identifier_submit)
+        self.faculty_id_entry.bind('<KeyRelease>', self.handle_identifier_key_release)
+        self.faculty_id_entry.grid_remove()
+
+        self.scan_status_entry = tk.Entry(
+            access_card, textvariable=self.input_help_var, justify='center', state='readonly',
+            readonlybackground='#f2f7ff', fg='#175cd3', **entry_style,
+        )
+        self.scan_status_entry.grid(row=3, column=0, sticky='ew', padx=24, ipady=11)
+        self.input_help_label = tk.Label(
+            access_card, textvariable=self.input_help_var, font=('Arial', 9),
+            bg='white', fg='#667085', wraplength=570, justify='left',
+        )
+        self.input_help_label.grid(row=4, column=0, sticky='w', padx=24, pady=(7, 0))
+        self.input_help_label.grid_remove()
+
+        self.manual_mode_button = tk.Button(
+            access_card, text="Enter Faculty ID manually", command=self.enable_manual_input,
+            bg='white', fg='#175cd3', activebackground='white', activeforeground='#004eeb',
+            font=('Arial', 9, 'bold'), relief='flat', cursor='hand2',
+        )
+        self.manual_mode_button.grid(row=5, column=0, sticky='w', padx=18, pady=(7, 13))
+
+        button_frame = tk.Frame(access_card, bg='white')
+        button_frame.grid(row=6, column=0, sticky='ew', padx=24, pady=(0, 11))
+        button_frame.grid_columnconfigure((0, 1), weight=1)
+        self.login_button = tk.Button(
+            button_frame, text="Log In", command=self.login, bg='#1769ff', fg='white',
+            activebackground='#0756df', activeforeground='white', font=('Arial', 11, 'bold'),
+            relief='flat', cursor='hand2', pady=11,
+        )
+        self.login_button.grid(row=0, column=0, sticky='ew', padx=(0, 6))
+        self.logout_button = tk.Button(
+            button_frame, text="Log Out", command=self.logout, bg='#fff1f0', fg='#b42318',
+            activebackground='#fee4e2', activeforeground='#b42318', font=('Arial', 11, 'bold'),
+            relief='flat', cursor='hand2', pady=11,
+        )
+        self.logout_button.grid(row=0, column=1, sticky='ew', padx=(6, 0))
+
+        self.current_user_label = tk.Label(
+            access_card, text="", font=('Arial', 10, 'bold'), bg='white', fg='#067647',
+        )
+        self.current_user_label.grid(row=7, column=0, pady=(0, 18))
+        self.root.after(300, self.focus_identifier_input)
+
+    def setup_gui_legacy(self):
         """Setup the login GUI"""
         self.root = tk.Tk()
         environment = get_current_environment().upper()
@@ -212,11 +354,6 @@ class LoginSystem:
                                           bg='#e0f7fa', fg='#4CAF50')
         self.current_user_label.grid(row=8, column=0, columnspan=2, pady=(5,5))
 
-        # Admin Button
-        admin_button = tk.Button(self.root, text="Admin Panel", command=self.open_admin,
-                                width=15, height=1, bg='#2196F3', fg='white',
-                                font=('Arial', 10, 'bold'))
-        admin_button.grid(row=9, column=0, columnspan=2, pady=(5,30))
         self.root.after(300, self.focus_identifier_input)
     
     def load_room_assignment(self):
@@ -230,14 +367,14 @@ class LoginSystem:
 
         if assigned_room:
             self.room_var.set(assigned_room)
-            self.status_var.set("✓ Room assigned to this device")
-            self.status_label.config(fg='#4CAF50')
-            self.room_display.config(bg='#c8e6c9')
+            self.status_var.set("Room assigned to this device")
+            self.status_label.config(fg='#067647')
+            self.room_display.config(bg='#ecfdf3', fg='#067647')
         else:
             self.room_var.set("Not assigned to a room")
-            self.status_var.set("⚠ Not assigned to a room - Contact administrator")
-            self.status_label.config(fg='#f44336')
-            self.room_display.config(bg='#ffcdd2')
+            self.status_var.set("Contact an administrator to assign this device")
+            self.status_label.config(fg='#b42318')
+            self.room_display.config(bg='#fff1f0', fg='#b42318')
 
     def get_rfid_help_text(self):
         if self.rfid_reader_config.get('mode') == 'serial':
@@ -279,6 +416,9 @@ class LoginSystem:
 
     def refresh_login_cache_async(self, initial=False):
         """Refresh Firebase data in the background so scans stay fast."""
+        if self.cache_refresh_in_progress:
+            return
+        self.cache_refresh_in_progress = True
         if initial:
             self.input_help_var.set("Loading login data...")
 
@@ -301,14 +441,18 @@ class LoginSystem:
 
             if initial:
                 self.root.after(0, self.after_initial_cache_loaded)
+            elif self.current_faculty_id:
+                self.root.after(0, self.reconcile_current_session)
         except Exception:
             if initial:
                 self.root.after(0, lambda: self.input_help_var.set("Unable to load login data. Check connection."))
+        finally:
+            self.cache_refresh_in_progress = False
 
     def periodic_login_cache_refresh(self):
         """Keep schedule/status data fresh without adding work to RFID scans."""
         self.refresh_login_cache_async()
-        self.root.after(10000, self.periodic_login_cache_refresh)
+        self.root.after(3000, self.periodic_login_cache_refresh)
 
     def cached_node(self, name):
         with self.cache_lock:
@@ -320,19 +464,42 @@ class LoginSystem:
         self.input_help_var.set(self.get_rfid_help_text())
 
     def receive_rfid_scan(self, identifier):
-        """Receive RFID value from serial listener and attempt login."""
+        """Use an RFID scan to log in or toggle the current faculty logout."""
         scan_started = time.monotonic()
-        if self.current_faculty_id:
-            return
         if not self.cache_ready:
             self.input_help_var.set("Loading login data. Scan again shortly.")
             return
         normalized_identifier = normalize_rfid_value(identifier)
         if not self.should_accept_scan(normalized_identifier):
             return
+
+        if self.current_faculty_id:
+            scanned_faculty = self.get_faculty_record(normalized_identifier) or {}
+            scanned_faculty_id = str(scanned_faculty.get('faculty_id', '')).strip()
+            if normalize_key(scanned_faculty_id) == normalize_key(self.current_faculty_id):
+                self.input_help_var.set("Logging out...")
+                self.root.update_idletasks()
+                self.logout()
+            else:
+                self.input_help_var.set("Another faculty member is logged in. Scan their card to log out.")
+            return
+
         self.input_help_var.set("Reading...")
         self.root.update_idletasks()
         self.login(normalized_identifier, scan_started=scan_started)
+
+    def reconcile_current_session(self):
+        """Clear this terminal when its session was ended from another device."""
+        if not self.current_faculty_id or not self.current_session_id:
+            return
+        session = self.cached_node("faculty_login_sessions").get(self.current_session_id, {}) or {}
+        if str(session.get('session_status', '')).strip().lower() != 'logged-out':
+            return
+
+        self.current_faculty_id = None
+        self.current_session_id = None
+        self.update_ui_for_logged_out()
+        self.input_help_var.set("Session moved to another device. Ready for next scan.")
 
     def should_accept_scan(self, identifier):
         """Suppress duplicate events from the same physical RFID scan."""
@@ -349,22 +516,22 @@ class LoginSystem:
         """Refresh room assignment from Firebase database"""
         try:
             # Show refreshing status
-            self.status_var.set("⟳ Refreshing...")
-            self.status_label.config(fg='#FF9800')
-            self.room_display.config(bg='#fff3e0')
+            self.status_var.set("Refreshing room assignment...")
+            self.status_label.config(fg='#b54708')
+            self.room_display.config(bg='#fffaeb', fg='#b54708')
             self.root.update()
 
             # Reload room assignment
             self.load_room_assignment()
 
             # Show success message briefly
-            self.status_var.set("✓ Refreshed successfully")
-            self.status_label.config(fg='#4CAF50')
+            self.status_var.set("Room assignment refreshed")
+            self.status_label.config(fg='#067647')
             self.root.after(2000, lambda: self.update_status_after_refresh())
 
         except Exception as e:
-            self.status_var.set("✗ Refresh failed")
-            self.status_label.config(fg='#f44336')
+            self.status_var.set("Refresh failed")
+            self.status_label.config(fg='#b42318')
             messagebox.showerror("Refresh Error", f"Failed to refresh room assignment: {str(e)}")
             self.root.after(3000, lambda: self.update_status_after_refresh())
 
@@ -372,11 +539,11 @@ class LoginSystem:
         """Update status back to normal after refresh"""
         assigned_room = self.device_manager.get_assigned_room()
         if assigned_room:
-            self.status_var.set("✓ Room assigned to this device")
-            self.status_label.config(fg='#4CAF50')
+            self.status_var.set("Room assigned to this device")
+            self.status_label.config(fg='#067647')
         else:
-            self.status_var.set("⚠ Not assigned to a room - Contact administrator")
-            self.status_label.config(fg='#f44336')
+            self.status_var.set("Contact an administrator to assign this device")
+            self.status_label.config(fg='#b42318')
 
     def focus_identifier_input(self):
         """Keep the scanner/manual input ready when the user is logged out."""
@@ -386,8 +553,8 @@ class LoginSystem:
     def enable_manual_input(self):
         """Switch from scan-first mode to manual Faculty ID entry."""
         self.input_mode.set('manual')
-        self.input_label_var.set("Faculty ID:")
-        self.input_help_var.set("Type your Faculty ID, then press Enter or click Login.")
+        self.input_label_var.set("FACULTY ID")
+        self.input_help_var.set("Faculty IDs are entered in uppercase automatically.")
         self.manual_mode_button.config(text="Use RFID scan instead", command=self.enable_rfid_input)
         self.scan_status_entry.grid_remove()
         self.input_help_label.grid()
@@ -398,10 +565,10 @@ class LoginSystem:
     def enable_rfid_input(self):
         """Switch back to RFID scan mode."""
         self.input_mode.set('rfid')
-        self.input_label_var.set("Scan RFID / ID:")
+        self.input_label_var.set("RFID SCANNER")
         self.input_help_var.set(self.get_rfid_help_text())
         self.manual_mode_button.config(
-            text="No ID card? Enter Faculty ID manually",
+            text="Enter Faculty ID manually",
             command=self.enable_manual_input
         )
         self.faculty_id_entry.delete(0, tk.END)
@@ -417,7 +584,11 @@ class LoginSystem:
             self.root.after_cancel(self.rfid_key_timer)
             self.rfid_key_timer = None
 
-        identifier = normalize_rfid_value(self.faculty_id_entry.get()) if self.input_mode.get() == 'rfid' else self.faculty_id_entry.get().strip()
+        identifier = (
+            normalize_rfid_value(self.faculty_id_entry.get())
+            if self.input_mode.get() == 'rfid'
+            else self.faculty_id_entry.get().strip().upper()
+        )
         if not identifier:
             messagebox.showerror("Error", "Please scan your ID card or enter your Faculty ID")
             self.focus_identifier_input()
@@ -434,11 +605,25 @@ class LoginSystem:
 
     def handle_identifier_key_release(self, event=None):
         """Auto-submit keyboard/HID RFID scans that do not send Enter."""
+        if self.input_mode.get() == 'manual':
+            self.uppercase_manual_identifier()
+            return
         if self.input_mode.get() != 'rfid' or self.current_faculty_id:
             return
         if self.rfid_key_timer:
             self.root.after_cancel(self.rfid_key_timer)
         self.rfid_key_timer = self.root.after(180, self.capture_keyboard_rfid_login)
+
+    def uppercase_manual_identifier(self):
+        """Uppercase a manually typed Faculty ID without moving the caret."""
+        current_value = self.faculty_id_entry.get()
+        uppercase_value = current_value.upper()
+        if current_value == uppercase_value:
+            return
+        cursor_position = self.faculty_id_entry.index(tk.INSERT)
+        self.faculty_id_entry.delete(0, tk.END)
+        self.faculty_id_entry.insert(0, uppercase_value)
+        self.faculty_id_entry.icursor(min(cursor_position, len(uppercase_value)))
 
     def capture_keyboard_rfid_login(self):
         if self.input_mode.get() != 'rfid' or self.current_faculty_id:
@@ -569,6 +754,21 @@ class LoginSystem:
 
     def get_session_id(self, faculty_id, device_id):
         return sanitize_id(f"session_{faculty_id}_{device_id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
+
+    def close_existing_faculty_sessions(self, faculty_id, now):
+        """Prepare logout updates for active sessions on other terminals."""
+        session_updates = {}
+        for session_id, session in self.cached_node("faculty_login_sessions").items():
+            if normalize_key(session.get('faculty_id')) != normalize_key(faculty_id):
+                continue
+            if str(session.get('session_status', '')).strip().lower() == 'logged-out':
+                continue
+            session_updates[session_id] = {
+                'logout_time': now,
+                'session_status': 'Logged-Out',
+                'logout_reason': 'Logged in on another device',
+            }
+        return session_updates
     
     def login(self, identifier=None, scan_started=None):
         """Handle login process"""
@@ -580,7 +780,11 @@ class LoginSystem:
             return
 
         self.login_in_progress = True
-        faculty_id = normalize_rfid_value(identifier) if identifier is not None else self.faculty_id_entry.get().strip()
+        faculty_id = (
+            normalize_rfid_value(identifier)
+            if identifier is not None
+            else self.faculty_id_entry.get().strip().upper()
+        )
         if identifier is not None:
             self.input_help_var.set("Reading...")
             self.root.update_idletasks()
@@ -613,6 +817,7 @@ class LoginSystem:
                 subject_id = current_schedule.get('subject_id', '') if current_schedule else ''
                 previous_status = self.cached_node("faculty_status").get(self.get_status_id(faculty_id), {}) or {}
                 session_id = self.get_session_id(faculty_id, device_id)
+                previous_session_updates = self.close_existing_faculty_sessions(faculty_id, now)
 
                 session_data = {
                     'session_id': session_id,
@@ -648,10 +853,20 @@ class LoginSystem:
                     print(f"RFID login UI updated in {time.monotonic() - scan_started:.3f}s")
 
                 with self.cache_lock:
+                    for previous_session_id, previous_session_update in previous_session_updates.items():
+                        previous_session = self.data_cache.setdefault(
+                            'faculty_login_sessions', {}
+                        ).setdefault(previous_session_id, {})
+                        previous_session.update(previous_session_update)
                     self.data_cache.setdefault('faculty_login_sessions', {})[session_id] = session_data
                     self.data_cache.setdefault('faculty_status', {})[status_data['status_id']] = status_data
 
-                self.sync_login_to_firebase(session_id, session_data, status_data)
+                self.sync_login_to_firebase(
+                    session_id,
+                    session_data,
+                    status_data,
+                    previous_session_updates,
+                )
             else:
                 if identifier is not None and self.input_mode.get() == 'rfid':
                     self.input_help_var.set("User not found. Scan again.")
@@ -667,8 +882,13 @@ class LoginSystem:
         finally:
             self.login_in_progress = False
 
-    def sync_login_to_firebase(self, session_id, session_data, status_data):
+    def sync_login_to_firebase(self, session_id, session_data, status_data, previous_session_updates=None):
         def worker():
+            for previous_session_id, previous_session_update in (previous_session_updates or {}).items():
+                update_data(
+                    f"faculty_login_sessions/{previous_session_id}",
+                    previous_session_update,
+                )
             set_data(f"faculty_login_sessions/{session_id}", session_data)
             set_data(f"faculty_status/{status_data['status_id']}", status_data)
 
@@ -804,15 +1024,6 @@ class LoginSystem:
             update_data(f"faculty_status/{status_id}", status_update)
 
         threading.Thread(target=worker, daemon=True).start()
-    
-    def open_admin(self):
-        """Open admin panel"""
-        try:
-            import subprocess
-            import sys
-            subprocess.Popen([sys.executable, os.path.join(APP_DIR, "admin.py")])
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to open admin panel: {str(e)}")
     
     def run(self):
         """Start the login system"""
