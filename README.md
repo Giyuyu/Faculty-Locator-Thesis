@@ -17,7 +17,6 @@ Install these applications before cloning the project:
 - [Node.js LTS](https://nodejs.org/)
 - [Python 3.11 or newer](https://www.python.org/downloads/)
 - [Flutter](https://docs.flutter.dev/get-started/install/windows), only when developing or running the mobile app
-- [Java 21 or newer](https://adoptium.net/), only when using the local Firebase database
 
 During Python installation, enable **Add Python to PATH**.
 
@@ -70,63 +69,22 @@ Running `\.\run.bat` without an option opens an interactive menu. The individual
 | Command | Application and target | Data environment | When to use it |
 | --- | --- | --- | --- |
 | `.\run.bat` | Interactive launcher menu | You choose | Use when you want to select a command from a numbered list. |
-| `.\run.bat local-db` | Firebase Auth and Realtime Database emulators | Local | Start this first and keep it open before running any `-local` client. |
-| `.\run.bat web-local` | React web app in the default browser | Local | Web development without changing staging or production data. |
 | `.\run.bat web-stg` | React web app in the default browser | Staging (`fac-loc-stg`) | Test web changes against staging data. |
 | `.\run.bat web-prod` | React web app in the default browser | Production (`fac-loc`) | Run the web app locally against live production data. |
-| `.\run.bat login-local` | Python faculty RFID login desktop app | Local | Test desktop login, schedules, rooms, and faculty status locally. |
 | `.\run.bat login-stg` | Python faculty RFID login desktop app | Staging (`fac-loc-stg`) | Test room login and RFID behavior using staging data. |
 | `.\run.bat login` | Python faculty RFID login desktop app | Production (`fac-loc`) | Run the faculty room-login station with live data. |
-| `.\run.bat admin-local` | Python desktop administration app | Local | Test room/device assignment and RFID registration locally. |
 | `.\run.bat admin-stg` | Python desktop administration app | Staging (`fac-loc-stg`) | Configure and test desktop records in staging. |
 | `.\run.bat admin` | Python desktop administration app | Production (`fac-loc`) | Configure production room devices and faculty RFID cards. |
-| `.\run.bat mobile-web-local` | Flutter mobile app in Chrome | Local | Test the mobile UI in a browser using local emulators. |
 | `.\run.bat mobile-web-stg` | Flutter mobile app in Chrome | Staging (`fac-loc-stg`) | Test the mobile UI in Chrome using staging data. |
 | `.\run.bat mobile-web` | Flutter mobile app in Chrome | Production (`fac-loc`) | Inspect the mobile UI in Chrome using live data. |
-| `.\run.bat mobile-local` | Flutter app on Android/iOS or an emulator | Local | Test the device app against local emulators. |
 | `.\run.bat mobile-stg` | Flutter app on Android/iOS or an emulator | Staging (`fac-loc-stg`) | Test the device app safely before release. |
 | `.\run.bat mobile-prod` | Flutter app on Android/iOS or an emulator | Production (`fac-loc`) | Run the device app using live production data. |
 
 Environment naming is consistent across launchers:
 
-- `-local` uses the Firebase emulators and requires `.\run.bat local-db`.
 - `-stg` uses the separate staging Firebase project.
 - Production commands use either `-prod` or no suffix (`login`, `admin`, and `mobile-web`).
 - `mobile-web...` runs Flutter in Chrome; other `mobile...` commands run on a device or emulator.
-
-## Recommended Local Development
-
-Use the Firebase Emulator Suite for routine development. It gives the web,
-desktop, and mobile clients one shared local Authentication and Realtime
-Database without touching staging or production.
-
-First terminal, kept open:
-
-```powershell
-.\run.bat local-db
-```
-
-Second terminal, choose a client:
-
-```powershell
-.\run.bat web-local
-.\run.bat login-local
-.\run.bat admin-local
-.\run.bat mobile-web-local
-.\run.bat mobile-local
-```
-
-Firebase Emulator UI: `http://127.0.0.1:4000`
-
-| Local role | Email | Password |
-| --- | --- | --- |
-| Admin | `admin@sti.edu` | `Admin@12345` |
-| Faculty | `faculty.local@sti.edu` | `Faculty@12345` |
-| Student | `student.local@sti.edu` | `Student@12345` |
-
-Local records persist under `data/local-firebase/` and are not committed. See
-[`docs/local-development.md`](docs/local-development.md) for physical-device,
-reset, port, and environment details.
 
 ## Run the Web Application
 
@@ -151,7 +109,6 @@ npm run dev:prod
 
 | Command | Firebase project |
 | --- | --- |
-| `npm run dev:local` | Local emulator only |
 | `npm run dev` or `npm run dev:stg` | `fac-loc-stg` |
 | `npm run dev:prod` | `fac-loc` |
 
@@ -190,6 +147,9 @@ Staging:
 ```
 
 Use the admin tool to assign a room to the device and register faculty RFID cards.
+
+Staging and production project settings are included with the repository. The
+desktop tools connect directly and do not request initialization credentials.
 
 The first time a desktop is configured, its local room and RFID settings are saved only on that computer.
 
@@ -235,13 +195,6 @@ flutter devices
 .\run.bat mobile-stg -d emulator-5554
 ```
 
-For `mobile-local`, an Android emulator reaches the computer through `10.0.2.2`
-automatically. A physical phone must use the computer's LAN IP:
-
-```powershell
-.\run.bat mobile-local -d DEVICE_ID --dart-define=LOCAL_FIREBASE_HOST=192.168.1.10
-```
-
 The staging app displays an `STG` badge beside the STI Locator name.
 
 ## Production and Staging
@@ -254,15 +207,6 @@ The staging app displays an `STG` badge beside the STI Locator name.
 | Firebase project | `fac-loc` | `fac-loc-stg` |
 
 Staging data is separate from production data. Test imports, account changes, roles, schedules, rooms, and RFID configuration against staging before applying them to production.
-
-Local is a third isolated environment:
-
-| Component | Local value |
-| --- | --- |
-| Web mode | `localdb` |
-| Flutter `APP_ENV` | `local` |
-| Python `STI_LOCATOR_ENV` | `local` |
-| Firebase | Auth and Realtime Database emulators |
 
 ## Updating an Existing Installation
 
@@ -377,10 +321,9 @@ flutter run --dart-define=APP_ENV=staging
 |-- desktop_app/         Python desktop and RFID applications
 |-- docs/                Architecture and database documentation
 |-- data/samples/        Sample schedule and account upload files
-|-- data/local-firebase/ Persisted local emulator records (Git ignored)
 |-- scripts/             Build and project helper scripts
 |-- launchers/           Environment-specific Windows batch launchers
-|-- firebase.json        Shared local emulator configuration
+|-- firebase.json        Firebase deployment configuration
 |-- run.bat              Main interactive and command-based launcher
 `-- archive/legacy/      Legacy files retained for reference
 ```

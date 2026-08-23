@@ -3,11 +3,9 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
-import 'firebase_options_local.dart';
 import 'firebase_options_staging.dart';
 
 const stiLogoAsset = 'resources/sti_logo-DgEAj6lq.png';
@@ -16,11 +14,6 @@ const appEnvironment = String.fromEnvironment(
   defaultValue: 'production',
 );
 const isStaging = appEnvironment == 'staging';
-const isLocal = appEnvironment == 'local';
-const localFirebaseHostOverride = String.fromEnvironment(
-  'LOCAL_FIREBASE_HOST',
-  defaultValue: '',
-);
 
 late final FirebaseApp locatorFirebaseApp;
 FirebaseAuth get locatorAuth =>
@@ -60,28 +53,13 @@ Future<Map<String, dynamic>> loadMobileData() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final firebaseOptions = isLocal
-      ? LocalFirebaseOptions.currentPlatform
-      : isStaging
+  final firebaseOptions = isStaging
       ? StagingFirebaseOptions.currentPlatform
       : DefaultFirebaseOptions.currentPlatform;
   locatorFirebaseApp = await Firebase.initializeApp(
-    name: isLocal
-        ? 'sti-locator-local'
-        : isStaging
-        ? 'sti-locator-staging'
-        : null,
+    name: isStaging ? 'sti-locator-staging' : null,
     options: firebaseOptions,
   );
-  if (isLocal) {
-    final emulatorHost = localFirebaseHostOverride.isNotEmpty
-        ? localFirebaseHostOverride
-        : (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
-        ? '10.0.2.2'
-        : '127.0.0.1';
-    await locatorAuth.useAuthEmulator(emulatorHost, 9099);
-    locatorDatabase.useDatabaseEmulator(emulatorHost, 9000);
-  }
   runApp(const StiLocatorMobileApp());
 }
 
@@ -708,7 +686,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (authenticatedRecord['password_change_required'] == true) {
         await locatorAuth.signOut();
         if (!mounted) return;
-        _snack('Change your temporary password from the web profile before using the mobile app.');
+        _snack(
+          'Change your temporary password from the web profile before using the mobile app.',
+        );
         return;
       }
       final user = await authenticateMobileUser(email, data.raw);
@@ -728,8 +708,9 @@ class _LoginScreenState extends State<LoginScreen> {
     } on FirebaseAuthException catch (error) {
       if (!mounted) return;
       final message = switch (error.code) {
-        'invalid-credential' || 'wrong-password' || 'user-not-found' =>
-          'Invalid email or password.',
+        'invalid-credential' ||
+        'wrong-password' ||
+        'user-not-found' => 'Invalid email or password.',
         'too-many-requests' => 'Too many attempts. Try again later.',
         'network-request-failed' => 'Check your connection and try again.',
         _ => error.message ?? 'Unable to sign in.',
@@ -1445,9 +1426,11 @@ class _MobileShellState extends State<MobileShell> {
       'users/${locatorAuth.currentUser?.uid ?? widget.user.uid}',
     ];
     for (final path in watchedPaths) {
-      _subscriptions.add(locatorDatabase.ref(path).onValue.listen((_) {
-        _reloadData();
-      }));
+      _subscriptions.add(
+        locatorDatabase.ref(path).onValue.listen((_) {
+          _reloadData();
+        }),
+      );
     }
   }
 
@@ -2210,7 +2193,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _changingPassword = false;
 
   Future<MapEntry<String, Map<String, dynamic>>?> _findUserRecord() async {
-    final snapshot = await locatorDatabase.ref('users/${widget.user.uid}').get();
+    final snapshot = await locatorDatabase
+        .ref('users/${widget.user.uid}')
+        .get();
     if (!snapshot.exists) return null;
     return MapEntry(widget.user.uid, asStringMap(snapshot.value));
   }
@@ -2324,7 +2309,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       final authUser = locatorAuth.currentUser;
       if (authUser == null || authUser.uid != widget.user.uid) {
-        throw Exception('Sign out and sign in again before changing your password.');
+        throw Exception(
+          'Sign out and sign in again before changing your password.',
+        );
       }
       final email = authUser.email ?? widget.user.username;
       final credential = EmailAuthProvider.credential(
@@ -3165,7 +3152,7 @@ class _LogoHeader extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
-        if (isStaging || isLocal) ...[
+        if (isStaging) ...[
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -3175,7 +3162,7 @@ class _LogoHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(5),
             ),
             child: const Text(
-              isLocal ? 'LOCAL' : 'STG',
+              'STG',
               style: TextStyle(
                 color: Color(0xFF7A5200),
                 fontSize: 10,

@@ -539,7 +539,12 @@ class AdminPanel:
             messagebox.showinfo("Success", f"Device saved and assigned to {room_id} successfully!")
             self.refresh_assignments()
         else:
-            messagebox.showerror("Error", "Failed to save device to database")
+            detail = self.device_manager.last_error or "Firebase rejected the device write."
+            messagebox.showerror(
+                "Device Save Failed",
+                f"Could not save this device to the {get_current_environment()} database.\n\n"
+                f"{detail}"
+            )
     
     def refresh_assignments(self):
         """Refresh the assignments display"""

@@ -75,9 +75,8 @@ echo.
 echo Setup complete.
 echo.
 echo Open launcher menu:   .\run.bat
-echo Run local database:   .\run.bat local-db
-echo Run web locally:      .\run.bat web-local
 echo Run web staging:      .\run.bat web-stg
+echo Run web production:   .\run.bat web-prod
 echo Run mobile staging:   .\run.bat mobile-stg
 echo Run faculty login:    .\run.bat login
 echo Run admin desktop:    .\run.bat admin

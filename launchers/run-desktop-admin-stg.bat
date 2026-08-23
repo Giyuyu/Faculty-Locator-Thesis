@@ -13,5 +13,4 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "STI_LOCATOR_ENV=staging"
-set "STI_LOCATOR_DESKTOP_CLIENT=admin"
 call ".venv\Scripts\python.exe" desktop_app\admin.py

@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "sti-locator-local"
+    "default": "fac-loc-stg",
+    "staging": "fac-loc-stg",
+    "production": "fac-loc"
   }
 }

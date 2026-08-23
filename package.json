@@ -8,18 +8,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --mode staging",
-    "dev:local": "vite --mode localdb",
     "dev:stg": "vite --mode staging",
     "dev:prod": "vite --mode production",
     "build": "node scripts/vercel-build.js",
-    "build:local": "vite build --mode localdb",
     "build:stg": "vite build --mode staging",
     "build:prod": "vite build --mode production",
-    "local:db": "firebase emulators:start --project sti-locator-local --only auth,database",
-    "local:seed": "node scripts/seed-local-firebase.js",
-    "local:check": "python scripts/check-local-firebase.py",
     "security:migrate-data": "node scripts/security-migrate-data.js",
-    "test:smoke": "node scripts/run-smoke-command.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },
