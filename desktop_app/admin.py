@@ -1,10 +1,13 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
+import base64
 import socket
 import subprocess
 import platform
 import json
 import os
+import sys
+from pathlib import Path
 from datetime import datetime
 from device_utils import DeviceManager
 from firebase_config import get_current_environment, get_data, update_data
@@ -90,6 +93,226 @@ class AdminPanel:
             return "Unknown"
     
     def setup_gui(self):
+        """Build the modern device administration interface."""
+        self.root = tk.Tk()
+        environment = get_current_environment().upper()
+        self.root.title(f"STI Locator - Device Administration [{environment}]")
+        self.root.geometry("1080x820")
+        self.root.minsize(920, 720)
+        self.root.configure(bg='#f3f6fc')
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=1)
+
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use('clam')
+        except tk.TclError:
+            pass
+        style.configure(
+            'Admin.TCombobox', fieldbackground='white', background='white',
+            foreground='#101828', bordercolor='#cfd8e6', padding=8,
+        )
+        style.configure(
+            'Admin.Treeview', background='white', fieldbackground='white',
+            foreground='#344054', rowheight=34, borderwidth=0,
+        )
+        style.configure(
+            'Admin.Treeview.Heading', background='#eef4ff', foreground='#344054',
+            font=('Arial', 9, 'bold'), padding=9, relief='flat',
+        )
+        style.map('Admin.Treeview', background=[('selected', '#dbe8ff')], foreground=[('selected', '#101828')])
+
+        header = tk.Frame(self.root, bg='#102a56', height=112)
+        header.grid(row=0, column=0, sticky='ew')
+        header.grid_propagate(False)
+        header.grid_columnconfigure(1, weight=1)
+
+        logo_path = Path(__file__).resolve().parent.parent / 'public' / 'sti_logo.png'
+        logo_data = base64.b64encode(logo_path.read_bytes())
+        self.sti_logo_image = tk.PhotoImage(data=logo_data).subsample(18, 18)
+        tk.Label(header, image=self.sti_logo_image, bg='#102a56', borderwidth=0).grid(
+            row=0, column=0, rowspan=2, padx=(30, 18), pady=20,
+        )
+        tk.Label(
+            header, text="Device Administration", font=('Arial', 21, 'bold'),
+            bg='#102a56', fg='white',
+        ).grid(row=0, column=1, sticky='sw', pady=(20, 0))
+        tk.Label(
+            header, text="Manage room terminals and faculty RFID assignments",
+            font=('Arial', 10), bg='#102a56', fg='#c9d7ee',
+        ).grid(row=1, column=1, sticky='nw', pady=(2, 20))
+        tk.Button(
+            header, text="Launch Login", command=self.open_login,
+            bg='#ffdd00', fg='#0755a4', activebackground='#ffe84d',
+            activeforeground='#0755a4', font=('Arial', 9, 'bold'), relief='flat',
+            cursor='hand2', padx=15, pady=8,
+        ).grid(row=0, column=2, rowspan=2, padx=(10, 8))
+        tk.Label(
+            header, text=environment, font=('Arial', 9, 'bold'), bg='#214675',
+            fg='white', padx=14, pady=7,
+        ).grid(row=0, column=3, rowspan=2, padx=(8, 30))
+
+        content = tk.Frame(self.root, bg='#f3f6fc')
+        content.grid(row=1, column=0, sticky='nsew', padx=26, pady=20)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_columnconfigure(1, weight=1)
+        content.grid_rowconfigure(2, weight=1)
+
+        device_card = self.create_admin_card(content, "Current Device", "Review this terminal before assigning it to a room.")
+        device_card.grid(row=0, column=0, sticky='nsew', padx=(0, 8), pady=(0, 14))
+        device_card.grid_columnconfigure(0, weight=1)
+        self.device_info_text = tk.Text(
+            device_card, height=4, font=('Consolas', 9), state=tk.DISABLED,
+            bg='#f8fafc', fg='#475467', relief='flat', padx=12, pady=9,
+            highlightbackground='#e4e7ec', highlightthickness=1,
+        )
+        self.device_info_text.grid(row=2, column=0, sticky='ew', padx=18, pady=(8, 10))
+        self.make_button(
+            device_card, "Refresh device info", self.refresh_device_info,
+            '#eef4ff', '#175cd3',
+        ).grid(row=3, column=0, sticky='w', padx=18, pady=(0, 16))
+
+        assignment_card = self.create_admin_card(content, "Room Assignment", "Connect this desktop terminal to its physical room.")
+        assignment_card.grid(row=0, column=1, sticky='nsew', padx=(8, 0), pady=(0, 14))
+        assignment_card.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            assignment_card, text="ROOM", font=('Arial', 9, 'bold'),
+            bg='white', fg='#344054',
+        ).grid(row=2, column=0, sticky='w', padx=18, pady=(10, 6))
+        self.room_var = tk.StringVar()
+        self.room_combo = ttk.Combobox(
+            assignment_card, textvariable=self.room_var, values=[],
+            font=('Arial', 10), state='readonly', style='Admin.TCombobox',
+        )
+        self.room_combo.grid(row=3, column=0, sticky='ew', padx=18)
+        self.make_button(
+            assignment_card, "Save room assignment", self.assign_room,
+            '#1769ff', 'white',
+        ).grid(row=4, column=0, sticky='ew', padx=18, pady=(13, 16))
+
+        rfid_card = self.create_admin_card(
+            content, "Faculty RFID Registration",
+            "Select a faculty member, scan a card, then save the assignment.",
+        )
+        rfid_card.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(0, 14))
+        rfid_card.grid_columnconfigure(1, weight=1)
+        rfid_card.grid_columnconfigure(3, weight=1)
+
+        tk.Label(rfid_card, text="FACULTY", font=('Arial', 9, 'bold'), bg='white', fg='#344054').grid(
+            row=2, column=0, sticky='w', padx=(18, 8), pady=(12, 6),
+        )
+        self.faculty_var = tk.StringVar()
+        self.faculty_combo = ttk.Combobox(
+            rfid_card, textvariable=self.faculty_var, values=[], font=('Arial', 10),
+            state='readonly', style='Admin.TCombobox',
+        )
+        self.faculty_combo.grid(row=2, column=1, sticky='ew', padx=(0, 18), pady=(12, 6))
+        self.faculty_combo.bind('<<ComboboxSelected>>', self.on_faculty_selected)
+
+        tk.Label(rfid_card, text="RFID SCAN", font=('Arial', 9, 'bold'), bg='white', fg='#344054').grid(
+            row=2, column=2, sticky='w', padx=(0, 8), pady=(12, 6),
+        )
+        self.rfid_var = tk.StringVar()
+        self.rfid_entry = tk.Entry(
+            rfid_card, textvariable=self.rfid_var, font=('Arial', 11), bg='#f9fafb',
+            fg='#101828', insertbackground='#101828', relief='flat',
+            highlightbackground='#cfd8e6', highlightcolor='#246bfe', highlightthickness=1,
+        )
+        self.rfid_entry.grid(row=2, column=3, sticky='ew', padx=(0, 18), pady=(12, 6), ipady=8)
+        self.rfid_entry.bind('<Return>', self.handle_rfid_scan)
+        self.rfid_entry.bind('<KeyRelease>', self.handle_rfid_key_release)
+
+        self.reader_status_var = tk.StringVar()
+        tk.Label(
+            rfid_card, textvariable=self.reader_status_var, font=('Arial', 9),
+            bg='white', fg='#667085', wraplength=680, justify='left',
+        ).grid(row=3, column=0, columnspan=3, sticky='w', padx=18, pady=(5, 3))
+
+        action_frame = tk.Frame(rfid_card, bg='white')
+        action_frame.grid(row=3, column=3, rowspan=2, sticky='e', padx=18, pady=(5, 14))
+        self.make_button(
+            action_frame, "Save RFID", self.save_rfid_assignment, '#1769ff', 'white',
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        self.make_button(
+            action_frame, "Clear RFID", self.clear_selected_faculty_rfid, '#fff1f0', '#b42318',
+        ).pack(side=tk.LEFT)
+
+        self.rfid_status_var = tk.StringVar(value="Select a faculty member, then scan their RFID card.")
+        tk.Label(
+            rfid_card, textvariable=self.rfid_status_var, font=('Arial', 9, 'bold'),
+            bg='white', fg='#175cd3', wraplength=680, justify='left',
+        ).grid(row=4, column=0, columnspan=3, sticky='w', padx=18, pady=(3, 14))
+
+        devices_card = self.create_admin_card(
+            content, "Registered Devices", "Devices currently configured for room access.",
+        )
+        devices_card.grid(row=2, column=0, columnspan=2, sticky='nsew')
+        devices_card.grid_columnconfigure(0, weight=1)
+        devices_card.grid_rowconfigure(2, weight=1)
+
+        table_frame = tk.Frame(devices_card, bg='white')
+        table_frame.grid(row=2, column=0, sticky='nsew', padx=18, pady=(10, 8))
+        table_frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_rowconfigure(0, weight=1)
+        columns = ('Device ID', 'Device Name', 'IP Address', 'MAC Address', 'Room ID', 'Status')
+        self.tree = ttk.Treeview(
+            table_frame, columns=columns, show='headings', height=7, style='Admin.Treeview',
+        )
+        widths = (170, 150, 120, 145, 110, 90)
+        for column, width in zip(columns, widths):
+            self.tree.heading(column, text=column.upper())
+            self.tree.column(column, width=width, minwidth=80, anchor='w')
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        scrollbar.grid(row=0, column=1, sticky='ns')
+
+        controls = tk.Frame(devices_card, bg='white')
+        controls.grid(row=3, column=0, sticky='ew', padx=18, pady=(0, 16))
+        self.make_button(
+            controls, "Delete selected", self.remove_assignment, '#fff1f0', '#b42318',
+        ).pack(side=tk.LEFT)
+        self.make_button(
+            controls, "Clear all", self.clear_all_assignments, '#fffaeb', '#b54708',
+        ).pack(side=tk.LEFT, padx=8)
+        self.make_button(
+            controls, "Export configuration", self.export_config, '#eef4ff', '#175cd3',
+        ).pack(side=tk.RIGHT)
+
+        self.refresh_device_info()
+        self.refresh_assignments()
+        self.update_room_options()
+        self.update_faculty_options()
+        self.refresh_rfid_detection()
+        self.start_rfid_listener()
+
+    def create_admin_card(self, parent, title, description):
+        card = tk.Frame(parent, bg='white', highlightbackground='#dce3ef', highlightthickness=1)
+        tk.Label(
+            card, text=title, font=('Arial', 13, 'bold'), bg='white', fg='#101828',
+        ).grid(row=0, column=0, columnspan=4, sticky='w', padx=18, pady=(15, 2))
+        tk.Label(
+            card, text=description, font=('Arial', 9), bg='white', fg='#667085',
+        ).grid(row=1, column=0, columnspan=4, sticky='w', padx=18)
+        return card
+
+    def make_button(self, parent, text, command, background, foreground):
+        return tk.Button(
+            parent, text=text, command=command, bg=background, fg=foreground,
+            activebackground=background, activeforeground=foreground,
+            font=('Arial', 9, 'bold'), relief='flat', cursor='hand2', padx=15, pady=8,
+        )
+
+    def open_login(self):
+        """Launch the faculty login terminal in the current environment."""
+        try:
+            login_path = Path(__file__).resolve().parent / 'login.py'
+            subprocess.Popen([sys.executable, str(login_path)])
+        except Exception as error:
+            messagebox.showerror("Launch Failed", f"Could not open the login terminal: {error}")
+
+    def setup_gui_legacy(self):
         """Setup the admin GUI"""
         self.root = tk.Tk()
         environment = get_current_environment().upper()
