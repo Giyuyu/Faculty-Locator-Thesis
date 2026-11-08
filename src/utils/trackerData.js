@@ -53,24 +53,36 @@ const getScheduleRecord = (schedules, scheduleId) => {
 };
 
 export const latestActiveUploadId = (uploads = {}) => {
-  const latest = Object.values(uploads || {})
-    .filter((upload) => (upload?.status || 'active') === 'active')
-    .sort((a, b) => new Date(b.uploaded_at || b.imported_at || 0) - new Date(a.uploaded_at || a.imported_at || 0))[0];
+  const latest = Object.entries(uploads || {})
+    .filter(([, upload]) => (upload?.status || 'active') === 'active')
+    .sort(([, a], [, b]) => {
+      const aTime = new Date(a?.uploaded_at || a?.imported_at || 0).getTime() || 0;
+      const bTime = new Date(b?.uploaded_at || b?.imported_at || 0).getTime() || 0;
+      return bTime - aTime;
+    })[0];
 
-  return latest?.schedule_upload_id || latest?.import_batch_id || '';
+  return latest?.[1]?.schedule_upload_id || latest?.[1]?.import_batch_id || latest?.[0] || '';
 };
 
 export const getReflectableSchedules = (schedules = {}, uploads = {}) => {
   const currentUploadId = latestActiveUploadId(uploads);
+  const activeSchedules = Object.entries(schedules || {}).filter(([, schedule]) => (
+    schedule && (schedule.status || 'active') === 'active'
+  ));
+  const activeUploadHasSchedules = activeSchedules.some(([, schedule]) => (
+    (schedule.import_batch_id || schedule.original_import_batch_id || schedule.schedule_upload_id || '') === currentUploadId
+  ));
 
-  return Object.values(schedules || {}).reduce((acc, schedule) => {
-    if (!schedule?.schedule_id) return acc;
-    if ((schedule.status || 'active') !== 'active') return acc;
+  return activeSchedules.reduce((acc, [key, schedule]) => {
+    const scheduleId = schedule.schedule_id || key;
+    if (!scheduleId) return acc;
+    const scheduleUploadId = schedule.import_batch_id
+      || schedule.original_import_batch_id
+      || schedule.schedule_upload_id
+      || '';
+    if (currentUploadId && activeUploadHasSchedules && scheduleUploadId && scheduleUploadId !== currentUploadId) return acc;
 
-    const scheduleUploadId = schedule.import_batch_id || schedule.original_import_batch_id || '';
-    if (currentUploadId && scheduleUploadId !== currentUploadId) return acc;
-
-    acc[schedule.schedule_id] = schedule;
+    acc[scheduleId] = { ...schedule, schedule_id: scheduleId };
     return acc;
   }, {});
 };

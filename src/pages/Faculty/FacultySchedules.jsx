@@ -9,7 +9,9 @@ import { database } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { FACULTY_GUIDE_STEPS } from '../../components/QuickStartGuide';
+import Pagination, { paginateItems } from '../../components/Pagination';
 import { publishScheduleNotification } from '../../utils/notifications';
+import { getReflectableSchedules } from '../../utils/trackerData';
 import logo from '../../assets/sti_logo.png';
 import {
   changeCurrentUserPassword,
@@ -17,6 +19,7 @@ import {
   openUserProfile,
   signOutCurrentUser,
 } from '../../utils/profileActions';
+import { resolveLinkedProfile } from '../../utils/profileIdentity';
 
 const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -228,6 +231,11 @@ function FacultySchedules() {
     return user ? JSON.parse(user) : null;
   });
   const [schedules, setSchedules] = useState([]);
+  const [viewSchedulePage, setViewSchedulePage] = useState(1);
+  const [scheduleTableWidth, setScheduleTableWidth] = useState(1280);
+  const topScheduleScrollRef = useRef(null);
+  const scheduleTableScrollRef = useRef(null);
+  const scheduleTableRef = useRef(null);
   const [facultyDirectory, setFacultyDirectory] = useState({});
   const [scheduleUploadRecords, setScheduleUploadRecords] = useState({});
 
@@ -311,17 +319,13 @@ function FacultySchedules() {
         const rooms = roomsSnapshot.val() || {};
         const faculties = facultiesSnapshot.val() || {};
         const scheduleUploads = scheduleUploadsSnapshot.val() || {};
-        const currentActiveUploadId = latestActiveUploadId(scheduleUploads);
         setFacultyDirectory(faculties);
         const facultyById = Object.values(faculties).reduce((acc, faculty) => {
           acc[faculty.faculty_id] = faculty;
           return acc;
         }, {});
 
-        const allSchedules = Object.values(snapshot.val())
-          .filter(Boolean)
-          .filter((schedule) => (schedule.status || 'active') === 'active')
-          .filter((schedule) => !currentActiveUploadId || schedule.import_batch_id === currentActiveUploadId || schedule.original_import_batch_id === currentActiveUploadId)
+        const allSchedules = Object.values(getReflectableSchedules(snapshot.val(), scheduleUploads))
           .map((schedule) => {
             const subject = subjects[schedule.subject_id] || {};
             const room = rooms[schedule.room_id] || {};
@@ -331,6 +335,7 @@ function FacultySchedules() {
               scheduleId: schedule.schedule_id,
               facultyId: schedule.faculty_id,
               subjectId: schedule.subject_id,
+              courseCode: schedule.course_code || subject.subject_code || schedule.subject_code || '',
               roomId: schedule.room_id,
               section: schedule.section || 'TBD',
               subject: subject.subject_name || schedule.subject_name || schedule.subject_id || 'TBD',
@@ -443,6 +448,29 @@ function FacultySchedules() {
       return matchesFilters && matchesSearch;
     });
   }, [schedules, selectedInstructor, selectedSubject, selectedSection, selectedDays, debouncedSearchTerm]);
+  const visibleViewData = useMemo(() => paginateItems(filteredViewData, viewSchedulePage, 20), [filteredViewData, viewSchedulePage]);
+
+  useEffect(() => {
+    setViewSchedulePage(1);
+  }, [debouncedSearchTerm, selectedInstructor, selectedSubject, selectedSection, selectedDays]);
+
+  useEffect(() => {
+    if (!showViewSchedules) return undefined;
+    const updateTableWidth = () => {
+      const table = scheduleTableRef.current;
+      const viewport = scheduleTableScrollRef.current;
+      if (table && viewport) setScheduleTableWidth(Math.max(table.scrollWidth, viewport.clientWidth));
+    };
+    updateTableWidth();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateTableWidth) : null;
+    if (scheduleTableRef.current) observer?.observe(scheduleTableRef.current);
+    if (scheduleTableScrollRef.current) observer?.observe(scheduleTableScrollRef.current);
+    window.addEventListener('resize', updateTableWidth);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateTableWidth);
+    };
+  }, [showViewSchedules, visibleViewData.length]);
 
   // Function to get start time for sorting
   const getStartTime = (timeStr) => {
@@ -843,6 +871,7 @@ function FacultySchedules() {
     // Map possible header variations to our expected keys
     const headerMappings = {
       section: ['section', 'class', 'group'],
+      course_code: ['course code', 'course_code', 'subject code', 'subject_code', 'code'],
       course_description: ['course description', 'course_description', 'subject', 'description', 'course desc', 'subject description', 'subject_description'],
       room: ['room', 'location', 'classroom'],
       time: ['time', 'schedule', 'period', 'start time', 'from'],
@@ -856,7 +885,7 @@ function FacultySchedules() {
 
     const headerIndex = {};
     const requiredHeaders = ['section', 'course_description', 'room', 'time', 'day', 'instructor'];
-    const optionalHeaders = ['faculty_id', 'end_time', 'semester', 'school_year'];
+    const optionalHeaders = ['course_code', 'faculty_id', 'end_time', 'semester', 'school_year'];
 
     const allHeaders = [...requiredHeaders, ...optionalHeaders];
 
@@ -886,6 +915,7 @@ function FacultySchedules() {
       const row = jsonData[i];
       if (row && row.length >= requiredHeaders.length) {
         const section = cellToString(row[headerIndex.section]);
+        const courseCode = headerIndex.course_code !== -1 ? cellToString(row[headerIndex.course_code]) : '';
         const courseDesc = cellToString(row[headerIndex.course_description]);
         let time = cellToString(row[headerIndex.time]);
         const day = cellToString(row[headerIndex.day]);
@@ -1009,6 +1039,7 @@ function FacultySchedules() {
           expandedDays.forEach(expandedDay => {
             const schedule = {
               section: currentSection || 'TBD',
+              courseCode,
               subject: courseDesc,
               room: room || 'TBD',
               time: formattedTime || 'TBD',
@@ -1140,9 +1171,11 @@ function FacultySchedules() {
           : findFacultyByName(schedule.instructor, faculties);
         const assignedFacultyId = matchedFaculty?.faculty_id || providedFacultyId || '';
         const subjectName = schedule.subject || 'TBD';
-        const subjectRecord = existingSubjectByName[normalizeLookup(subjectName)];
-        const subjectId = subjectRecord?.subject_id || sanitizeId(`subj_${subjectName}`);
-        const subjectCode = subjectRecord?.subject_code || buildSubjectCode(subjectName);
+        const importedCourseCode = String(schedule.courseCode || '').trim();
+        const subjectRecord = existingSubjectByName[normalizeLookup(importedCourseCode)]
+          || existingSubjectByName[normalizeLookup(subjectName)];
+        const subjectCode = importedCourseCode || subjectRecord?.subject_code || buildSubjectCode(subjectName);
+        const subjectId = subjectRecord?.subject_id || sanitizeId(`subj_${subjectCode || subjectName}`);
 
         if (!subjectRecord) {
           updates[`subjects/${subjectId}`] = {
@@ -1181,6 +1214,8 @@ function FacultySchedules() {
           faculty_id: assignedFacultyId,
           instructor_name: schedule.instructor || '',
           subject_id: subjectId,
+          course_code: subjectCode,
+          subject_name: subjectName,
           room_id: roomId,
           room_name: roomName,
           day: schedule.day || 'TBD',
@@ -1335,10 +1370,10 @@ function FacultySchedules() {
         const rooms = roomsSnapshot.val() || {};
         const subjectRecord = Object.values(subjects).find((subject) =>
           normalizeLookup(subject.subject_name) === normalizeLookup(editForm.subject) ||
-          normalizeLookup(subject.subject_code) === normalizeLookup(editForm.subject)
+          normalizeLookup(subject.subject_code) === normalizeLookup(editForm.courseCode || editForm.subject)
         );
         const subjectId = subjectRecord?.subject_id || sanitizeId(`subj_${editForm.subject}`);
-        const subjectCode = subjectRecord?.subject_code || buildSubjectCode(editForm.subject);
+        const subjectCode = editForm.courseCode || subjectRecord?.subject_code || buildSubjectCode(editForm.subject);
         const roomRecord = Object.values(rooms).find((room) =>
           normalizeLookup(room.room_name) === normalizeLookup(editForm.room) ||
           normalizeLookup(room.room_id) === normalizeLookup(editForm.room)
@@ -1368,6 +1403,8 @@ function FacultySchedules() {
             schedule_id: scheduleId,
             faculty_id: assignedFacultyId,
             subject_id: subjectId,
+            course_code: subjectCode,
+            subject_name: editForm.subject || 'TBD',
             room_id: roomId,
             room_name: roomName,
             day: editForm.day || 'TBD',
@@ -1410,6 +1447,7 @@ function FacultySchedules() {
           assignedFacultyName,
           instructor: assignedFacultyName || editForm.instructor || 'Unassigned',
           subjectId,
+          courseCode: subjectCode,
           roomId,
           room: roomName,
           time: `${editForm.startTime || 'TBD'} - ${editForm.endTime || 'TBD'}`,
@@ -1454,14 +1492,24 @@ function FacultySchedules() {
   const facultyName = currentUser?.name || 'Faculty Member';
   const canManageSchedules = Boolean(currentUser?.permissions?.upload_schedules);
   const isAdminUser = currentUser?.userType === 'admin' || currentUser?.roleIds?.includes('admin');
-  const currentFacultyRecord = Object.values(facultyDirectory).find((faculty) => faculty.user_id === currentUser?.uid);
-  const currentFacultyId = currentFacultyRecord?.faculty_id || currentUser?.facultyId || '';
-  const isOwnSchedule = (schedule) => currentFacultyId && schedule.facultyId === currentFacultyId;
+  const currentFacultyLink = resolveLinkedProfile({
+    user: currentUser || {},
+    userId: currentUser?.uid,
+    email: currentUser?.email || currentUser?.username,
+    faculties: facultyDirectory,
+    preferredType: 'faculties',
+  });
+  const currentFacultyId = currentFacultyLink?.profile?.faculty_id || currentUser?.facultyId || '';
+  const isOwnSchedule = (schedule) => currentFacultyId
+    && normalizeFacultyId(schedule.facultyId) === normalizeFacultyId(currentFacultyId);
   const personalSchedules = schedules.filter(isOwnSchedule);
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
   const todayCount = personalSchedules.filter((schedule) => schedule.day === todayName).length;
   const uniqueRoomCount = new Set(personalSchedules.map((schedule) => schedule.room).filter(Boolean)).size;
   const visibleDays = selectedDays === 'All' ? scheduleDays : [selectedDays];
+  const populatedVisibleDays = visibleDays.filter((day) => (
+    personalSchedules.some((schedule) => schedule.day === day)
+  ));
   const facultyOptions = Object.values(facultyDirectory)
     .filter((faculty) => faculty.faculty_id)
     .sort((a, b) => facultyDisplayName(a).localeCompare(facultyDisplayName(b)));
@@ -1551,7 +1599,7 @@ function FacultySchedules() {
         const room = rooms[schedule.room_id] || {};
         const faculty = facultyById[schedule.faculty_id] || {};
         return {
-          courseCode: subject.subject_code || schedule.subject_code || schedule.subject_id || '',
+          courseCode: schedule.course_code || subject.subject_code || schedule.subject_code || schedule.subject_id || '',
           courseDescription: subject.subject_name || schedule.subject_name || schedule.subject_id || '',
           day: schedule.day || '',
           startTime: schedule.start_time || '',
@@ -2311,12 +2359,14 @@ function FacultySchedules() {
             </div>
           )}
 
-          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className={`mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 ${isAdminUser ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
             {[
               { label: 'My Classes', value: personalSchedules.length, detail: 'Assigned entries', icon: MdEventNote, accent: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
               { label: 'Today', value: todayCount, detail: todayName, icon: MdAccessTime, accent: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' },
               { label: 'Rooms', value: uniqueRoomCount, detail: 'Unique locations', icon: MdLocationOn, accent: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
-              { label: 'Last Update', value: lastUpdatedBy || 'None', detail: 'Schedule source', icon: MdCheck, accent: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300' },
+              ...(isAdminUser ? [
+                { label: 'Last Update', value: lastUpdatedBy || 'None', detail: 'Schedule source', icon: MdCheck, accent: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300' },
+              ] : []),
             ].map((item) => {
               const Icon = item.icon;
               return (
@@ -2377,75 +2427,72 @@ function FacultySchedules() {
             </div>
 
             {personalSchedules.length > 0 ? (
-              <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-2">
-                {visibleDays.map((day) => {
+              <div className="space-y-4 p-4 sm:p-5">
+                {populatedVisibleDays.map((day) => {
                   const daySchedules = personalSchedules
                     .filter(schedule => schedule.day === day)
                     .sort((a, b) => getStartTime(a.time).localeCompare(getStartTime(b.time)));
 
-                  // if (daySchedules.length === 0) return null;
-
                   return (
-                    <div key={day} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
-                      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-gray-700">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                    <section key={day} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                      <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-950/60 dark:bg-blue-950/20 sm:px-5">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white shadow-sm">
                             <MdSchedule className="h-5 w-5" />
                           </div>
                           <div>
                             <h3 className="font-semibold text-slate-950 dark:text-gray-100">{day}</h3>
-                            <p className="mt-1 text-sm text-slate-500 dark:text-gray-400">Teaching schedule</p>
+                            <p className="text-xs text-slate-500 dark:text-gray-400">
+                              {daySchedules.length} {daySchedules.length === 1 ? 'class' : 'classes'} scheduled
+                            </p>
                           </div>
                         </div>
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 dark:bg-gray-700 dark:text-gray-300">{daySchedules.length}</span>
+                        <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-blue-600 px-2 text-xs font-bold text-white">{daySchedules.length}</span>
                       </div>
-                      {daySchedules.length > 0 ? (
-                        <div className="divide-y divide-slate-100 dark:divide-gray-700">
-                          {daySchedules.map((schedule, index) => (
-                          <div key={index} className="p-5 transition hover:bg-slate-50 dark:hover:bg-gray-800">
-                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="flex-1">
-                                <div className="mb-3 flex flex-wrap items-center gap-2">
-                                  <h4 className="text-base font-semibold text-slate-950 dark:text-gray-100">{schedule.subject}</h4>
-                                  <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                                    <MdClass className="h-4 w-4" />
-                                    {schedule.section}
-                                  </span>
-                                </div>
-                                <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-                                  <div className="flex items-center space-x-3 text-slate-600 dark:text-gray-300">
-                                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 dark:bg-gray-700">
-                                      <MdLocationOn className="h-5 w-5 text-slate-500 dark:text-gray-300" />
-                                    </div>
-                                    <div>
-                                      <div className="font-medium text-slate-900 dark:text-gray-100">Room</div>
-                                      <div className="text-slate-500 dark:text-gray-400">{schedule.room}</div>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center space-x-3 text-slate-600 dark:text-gray-300">
-                                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 dark:bg-gray-700">
-                                      <MdAccessTime className="h-5 w-5 text-slate-500 dark:text-gray-300" />
-                                    </div>
-                                    <div>
-                                      <div className="font-medium text-slate-900 dark:text-gray-100">Time</div>
-                                      <div className="text-slate-500 dark:text-gray-400">{schedule.time}</div>
-                                    </div>
-                                  </div>
-                                </div>
+                      <div className="divide-y divide-slate-100 dark:divide-gray-700">
+                        {daySchedules.map((schedule, index) => (
+                          <div
+                            key={schedule.scheduleId || `${day}-${schedule.time}-${index}`}
+                            className="grid gap-3 px-4 py-3.5 transition-colors hover:bg-slate-50/80 dark:hover:bg-gray-800/70 sm:px-5 lg:grid-cols-[10rem_minmax(0,1fr)_9rem_9rem] lg:items-center lg:gap-5"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500 dark:bg-gray-800 dark:text-gray-300">
+                                <MdAccessTime className="h-[18px] w-[18px]" />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Time</p>
+                                <p className="whitespace-nowrap text-sm font-semibold text-blue-700 dark:text-blue-300">{schedule.time}</p>
+                              </div>
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="truncate text-sm font-semibold text-slate-950 dark:text-gray-100 sm:text-base">{schedule.subject}</h4>
+                              <p className="mt-1 text-xs font-semibold uppercase text-blue-600 dark:text-blue-300">
+                                {schedule.courseCode || 'Course code not specified'}
+                              </p>
+                            </div>
+                            <div className="min-w-0 border-slate-200 lg:border-l lg:pl-5 dark:border-gray-700">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Section</p>
+                              <p className="mt-0.5 truncate text-sm font-medium text-slate-700 dark:text-gray-200">{schedule.section}</p>
+                            </div>
+                            <div className="flex min-w-0 items-center gap-2.5 border-slate-200 lg:border-l lg:pl-5 dark:border-gray-700">
+                              <MdLocationOn className="h-4 w-4 shrink-0 text-slate-400" />
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Room</p>
+                                <p className="mt-0.5 truncate text-sm font-medium text-slate-700 dark:text-gray-200">{schedule.room}</p>
                               </div>
                             </div>
                           </div>
                         ))}
-                        </div>
-                      ) : (
-                        <div className="flex min-h-32 flex-col items-center justify-center px-5 py-8 text-center">
-                          <MdEventBusy className="h-8 w-8 text-slate-300 dark:text-gray-600" />
-                          <p className="mt-3 text-sm font-medium text-slate-600 dark:text-gray-300">No schedules for {day}</p>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    </section>
                   );
                 })}
+                {populatedVisibleDays.length === 0 && (
+                  <div className="flex min-h-40 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center dark:border-gray-700 dark:bg-gray-900/40">
+                    <MdEventBusy className="h-8 w-8 text-slate-300 dark:text-gray-600" />
+                    <p className="mt-3 text-sm font-medium text-slate-600 dark:text-gray-300">No schedules for {selectedDays}</p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="px-6 py-14 text-center">
@@ -2665,11 +2712,12 @@ function FacultySchedules() {
               </div>
 
               {/* Preview Table */}
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg overflow-hidden">
-                <table className="w-full">
+              <div className="overflow-x-auto rounded-lg bg-gray-50 dark:bg-gray-700">
+                <table className="min-w-[1280px] w-full">
                   <thead className="bg-gray-100 dark:bg-gray-600">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Section</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Course Code</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Subject</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Room</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
@@ -2711,6 +2759,19 @@ function FacultySchedules() {
                               />
                             ) : (
                               <span className="text-gray-900 dark:text-gray-100 font-medium cursor-pointer hover:text-blue-600" onClick={() => startEditingPreview(index)}>{schedule.section}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editForm.courseCode || ''}
+                                onChange={(e) => setEditForm({...editForm, courseCode: e.target.value})}
+                                className="w-full rounded border border-gray-300 bg-gray-100 px-2 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                                placeholder="Course Code"
+                              />
+                            ) : (
+                              <span className="font-medium text-blue-700 dark:text-blue-300 cursor-pointer" onClick={() => startEditingPreview(index)}>{schedule.courseCode || 'Not set'}</span>
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm">
@@ -3040,7 +3101,7 @@ function FacultySchedules() {
             <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
               <div className="mb-4">
                 <p className="text-gray-600 dark:text-gray-400">
-                  Found {schedules.length} schedule entries. Use filters to narrow down and click fields to edit.
+                  Found {filteredViewData.length} schedule entries. Use filters to narrow down and click fields to edit.
                 </p>
               </div>
 
@@ -3109,11 +3170,35 @@ function FacultySchedules() {
               </div>
 
               {/* View Table */}
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg overflow-hidden">
-                <table className="w-full">
+              <style>{`.schedule-table-scroll::-webkit-scrollbar { display: none; } .schedule-table-scroll { scrollbar-width: none; }`}</style>
+              <div
+                ref={topScheduleScrollRef}
+                className="sticky top-0 z-20 mb-1 overflow-x-auto overflow-y-hidden rounded-t-lg border border-b-0 border-slate-200 bg-slate-100 dark:border-gray-600 dark:bg-gray-600"
+                aria-label="Scroll schedule table horizontally"
+                onScroll={(event) => {
+                  const tableViewport = scheduleTableScrollRef.current;
+                  if (tableViewport && tableViewport.scrollLeft !== event.currentTarget.scrollLeft) {
+                    tableViewport.scrollLeft = event.currentTarget.scrollLeft;
+                  }
+                }}
+              >
+                <div style={{ width: scheduleTableWidth, height: 16 }} />
+              </div>
+              <div
+                ref={scheduleTableScrollRef}
+                className="schedule-table-scroll overflow-x-auto rounded-b-lg bg-gray-50 dark:bg-gray-700"
+                onScroll={(event) => {
+                  const topViewport = topScheduleScrollRef.current;
+                  if (topViewport && topViewport.scrollLeft !== event.currentTarget.scrollLeft) {
+                    topViewport.scrollLeft = event.currentTarget.scrollLeft;
+                  }
+                }}
+              >
+                <table ref={scheduleTableRef} className="min-w-[1280px] w-full">
                   <thead className="bg-gray-100 dark:bg-gray-600">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Section</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Course Code</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Subject</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Room</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
@@ -3125,7 +3210,7 @@ function FacultySchedules() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
-                    {filteredViewData.map((schedule, originalIndex) => {
+                    {visibleViewData.map((schedule) => {
                         const index = schedules.findIndex(s => s.scheduleId === schedule.scheduleId);
                         const isEditing = editingRow === index;
 
@@ -3135,7 +3220,7 @@ function FacultySchedules() {
                         const { start: startTime, end: endTime } = parseTime(schedule.time);
 
                         return (
-                          <tr key={originalIndex} className="hover:bg-gray-50 dark:hover:bg-gray-600">
+                          <tr key={schedule.scheduleId || `${schedule.section}-${schedule.day}-${schedule.time}`} className="hover:bg-gray-50 dark:hover:bg-gray-600">
                             <td className="px-4 py-3 text-sm">
                               {isEditing ? (
                                 <input
@@ -3147,6 +3232,19 @@ function FacultySchedules() {
                                 />
                               ) : (
                                 <span className="text-gray-900 dark:text-gray-100 font-medium cursor-pointer hover:text-blue-600" onClick={() => startEditingSchedule(schedule)}>{schedule.section}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={editForm.courseCode || ''}
+                                  onChange={(e) => setEditForm({...editForm, courseCode: e.target.value})}
+                                  className="w-full rounded border border-gray-300 bg-gray-100 px-2 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                                  placeholder="Course Code"
+                                />
+                              ) : (
+                                <span className="font-medium text-blue-700 dark:text-blue-300 cursor-pointer" onClick={() => startEditingSchedule(schedule)}>{schedule.courseCode || 'Not set'}</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -3291,6 +3389,7 @@ function FacultySchedules() {
                   </tbody>
                 </table>
               </div>
+              <Pagination page={viewSchedulePage} pageSize={20} totalItems={filteredViewData.length} onPageChange={setViewSchedulePage} />
             </div>
 
             {/* Modal Footer */}

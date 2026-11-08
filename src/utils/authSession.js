@@ -1,5 +1,6 @@
 import { get, ref } from 'firebase/database';
 import { database } from '../firebase';
+import { resolveLinkedProfile } from './profileIdentity';
 
 const ALL_PERMISSIONS = [
   'manage_users',
@@ -15,9 +16,6 @@ const ALL_PERMISSIONS = [
 ];
 
 const inactiveStatuses = new Set(['inactive', 'archived', 'deleted']);
-
-const findProfile = (profiles, userId) => Object.entries(profiles || {})
-  .find(([, profile]) => profile?.user_id === userId);
 
 export async function loadAuthenticatedSession(authUser) {
   if (!authUser || authUser.isAnonymous) throw new Error('authentication-required');
@@ -50,10 +48,16 @@ export async function loadAuthenticatedSession(authUser) {
     ALL_PERMISSIONS.forEach((permission) => { permissions[permission] = true; });
   }
 
-  const profileEntry = roleIds.includes('faculty') || roleIds.includes('admin')
-    ? findProfile(facultiesSnapshot.val(), authUser.uid) || findProfile(studentsSnapshot.val(), authUser.uid)
-    : findProfile(studentsSnapshot.val(), authUser.uid) || findProfile(facultiesSnapshot.val(), authUser.uid);
-  const [profileId, profile] = profileEntry || [authUser.uid, {}];
+  const linkedProfile = resolveLinkedProfile({
+    user: userData,
+    userId: authUser.uid,
+    email: authUser.email,
+    faculties: facultiesSnapshot.val() || {},
+    students: studentsSnapshot.val() || {},
+    preferredType: roleIds.includes('student') && !roleIds.includes('faculty') ? 'students' : 'faculties',
+  });
+  const profileId = linkedProfile?.key || authUser.uid;
+  const profile = linkedProfile?.profile || {};
   const name = [profile.first_name, profile.middle_name, profile.last_name]
     .filter(Boolean)
     .join(' ');
@@ -66,7 +70,9 @@ export async function loadAuthenticatedSession(authUser) {
     roleIds,
     name: name || userData.username || authUser.email || 'User',
     id: profileId,
+    profileType: linkedProfile?.type || '',
     facultyId: profile.faculty_id || '',
+    studentNumber: profile.student_number || '',
     permissions,
     passwordChangeRequired: userData.password_change_required === true,
   };

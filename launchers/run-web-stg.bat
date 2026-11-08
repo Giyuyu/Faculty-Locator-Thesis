@@ -9,5 +9,5 @@ if not exist "node_modules" (
   if errorlevel 1 exit /b 1
 )
 
-echo Starting STI Locator web app [STAGING]...
-call npm run dev:stg
+echo Starting STI Locator web app and secure API [STAGING]...
+call node scripts\local-vercel-dev.js staging

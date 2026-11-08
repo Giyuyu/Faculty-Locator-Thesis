@@ -30,7 +30,7 @@ function App() {
             <Route path="/student" element={<ProtectedRoute permission="access_student_module"><Student /></ProtectedRoute>} />
             <Route path="/faculty" element={<ProtectedRoute permission="access_faculty_module"><Faculty /></ProtectedRoute>} />
             <Route path="/faculty-schedules" element={<ProtectedRoute permission="view_schedules"><FacultySchedules /></ProtectedRoute>} />
-            <Route path="/room-tracker" element={<ProtectedRoute permission="access_faculty_module"><RoomTracker /></ProtectedRoute>} />
+            <Route path="/room-tracker" element={<ProtectedRoute anyPermissions={['access_faculty_module', 'manage_rooms']}><RoomTracker /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute permission="access_admin_module"><Admin /></ProtectedRoute>} />
             <Route path="/kiosk" element={<Kiosk />} />
           </Routes>

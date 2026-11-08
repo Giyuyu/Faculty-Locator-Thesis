@@ -7,6 +7,7 @@ import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { FACULTY_GUIDE_STEPS } from '../../components/QuickStartGuide';
+import Pagination, { paginateItems } from '../../components/Pagination';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData } from '../../utils/trackerData';
 import {
@@ -68,6 +69,7 @@ function RoomTracker() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFloor, setSelectedFloor] = useState('All');
   const [selectedStatus, setSelectedStatus] = useState('All');
+  const [roomPage, setRoomPage] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -155,14 +157,19 @@ function RoomTracker() {
 
   const filteredData = useMemo(() => {
     return roomLocations.filter(item => {
-      const matchesSearch = item.room.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            item.floor.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesFloor = selectedFloor === 'All' || item.floor === selectedFloor;
+      const roomName = String(item.room || '');
+      const floorName = String(item.floor || '');
+      const query = searchTerm.trim().toLowerCase();
+      const matchesSearch = roomName.toLowerCase().includes(query) ||
+                            floorName.toLowerCase().includes(query);
+      const matchesFloor = selectedFloor === 'All' || floorName === selectedFloor;
       const matchesStatus = selectedStatus === 'All' || item.status === selectedStatus;
 
       return matchesSearch && matchesFloor && matchesStatus;
     });
   }, [searchTerm, selectedFloor, selectedStatus, roomLocations]);
+  const visibleRooms = useMemo(() => paginateItems(filteredData, roomPage), [filteredData, roomPage]);
+  useEffect(() => setRoomPage(1), [searchTerm, selectedFloor, selectedStatus]);
 
   const floors = ['All', 'Ground Floor', '2nd Floor', '3rd Floor', '4th Floor', '5th Floor', '6th Floor'];
   const statuses = ['All', 'Occupied', 'Available', 'Reserved', 'Under Maintenance'];
@@ -350,7 +357,7 @@ function RoomTracker() {
         {/* Results Count */}
         <div className="mb-8">
           <p className="text-gray-600 dark:text-gray-400">
-            Showing {filteredData.length} of {roomLocations.length} rooms
+            Found {filteredData.length} of {roomLocations.length} rooms
           </p>
         </div>
 
@@ -373,7 +380,7 @@ function RoomTracker() {
            </div>
          ) : (
            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8" data-tour="faculty-room-ready">
-             {filteredData.map((room) => (
+             {visibleRooms.map((room) => (
               (() => {
                 const statusStyle = getRoomStatusStyle(room.status);
                 const StatusIcon = statusStyle.icon;
@@ -423,6 +430,10 @@ function RoomTracker() {
               })()
                   ))}
            </div>
+         )}
+
+         {!loading && !error && (
+           <Pagination page={roomPage} pageSize={10} totalItems={filteredData.length} onPageChange={setRoomPage} />
          )}
  
           {/* No Results */}

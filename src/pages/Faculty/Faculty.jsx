@@ -7,8 +7,11 @@ import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { FACULTY_GUIDE_STEPS } from '../../components/QuickStartGuide';
+import ScheduleDayView from '../../components/ScheduleDayView';
+import Pagination, { paginateItems } from '../../components/Pagination';
 import logo from '../../assets/sti_logo.png';
-import { buildTrackerData } from '../../utils/trackerData';
+import { buildTrackerData, getReflectableSchedules } from '../../utils/trackerData';
+import { sortSchedulesByDayAndTime } from '../../utils/scheduleDisplay';
 import {
   changeCurrentUserPassword,
   openThemeSettings,
@@ -20,6 +23,7 @@ function Faculty() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('All');
+  const [facultyPage, setFacultyPage] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedFaculty, setSelectedFaculty] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -27,6 +31,7 @@ function Faculty() {
   const [quickGuideOpen, setQuickGuideOpen] = useState(() => Boolean(sessionStorage.getItem('quickTourResume:faculty-v2')));
   const [currentUser, setCurrentUser] = useState(null);
   const [facultyLocations, setFacultyLocations] = useState([]);
+  const [scheduleRows, setScheduleRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -70,18 +75,41 @@ function Faculty() {
     ], (data) => {
       try {
         const { facultyLocations: locations } = buildTrackerData(data);
+        const subjects = data.subjects || {};
+        const rooms = data.rooms || {};
+        const schedules = Object.values(getReflectableSchedules(
+          data.schedules || {},
+          data.schedule_uploads || {},
+        )).filter(Boolean).map((schedule) => {
+          const subject = subjects[schedule.subject_id] || {};
+          const room = rooms[schedule.room_id] || {};
+          return {
+            scheduleId: schedule.schedule_id,
+            facultyId: schedule.faculty_id,
+            subject: subject.subject_name || subject.subject_code || schedule.subject_name || schedule.subject_id || 'TBD',
+            courseCode: schedule.course_code || subject.subject_code || schedule.subject_code || '',
+            day: schedule.day || 'TBD',
+            startTime: schedule.start_time || 'TBD',
+            endTime: schedule.end_time || 'TBD',
+            section: schedule.section || 'TBD',
+            room: room.room_name || schedule.room_name || schedule.room_id || 'TBD',
+          };
+        });
         setFacultyLocations(locations);
+        setScheduleRows(sortSchedulesByDayAndTime(schedules));
         setLoading(false);
         setError(null);
       } catch (err) {
         console.error('Error fetching faculty locations:', err);
         setFacultyLocations([]);
+        setScheduleRows([]);
         setLoading(false);
         setError('Failed to load faculty data');
       }
     }, (error) => {
       console.error('Firebase error:', error);
       setFacultyLocations([]);
+      setScheduleRows([]);
       setLoading(false);
       setError('Failed to connect to database');
     });
@@ -118,6 +146,14 @@ function Faculty() {
       return matchesSearch && matchesStatus;
     });
   }, [searchTerm, selectedStatus, facultyLocations]);
+  const visibleFaculty = useMemo(() => paginateItems(filteredData, facultyPage), [filteredData, facultyPage]);
+  useEffect(() => setFacultyPage(1), [searchTerm, selectedStatus]);
+
+  const selectedFacultySchedules = useMemo(() => (
+    selectedFaculty
+      ? scheduleRows.filter((schedule) => schedule.facultyId === selectedFaculty.id)
+      : []
+  ), [scheduleRows, selectedFaculty]);
 
   const statuses = ['All', 'In Class', 'In Room', 'Offline'];
   const statusClasses = {
@@ -259,7 +295,7 @@ function Faculty() {
         {/* Results Count */}
         <div className="mb-8">
           <p className="text-gray-600 dark:text-gray-400">
-            Showing {filteredData.length} of {facultyLocations.length} faculty members
+            Found {filteredData.length} of {facultyLocations.length} faculty members
           </p>
         </div>
 
@@ -278,7 +314,7 @@ function Faculty() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8" data-tour="faculty-cards">
-            {filteredData.map((faculty) => (
+            {visibleFaculty.map((faculty) => (
               <div
                 key={faculty.id}
                 className={`bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300 transform hover:scale-105 cursor-pointer ${
@@ -336,6 +372,9 @@ function Faculty() {
             ))}
           </div>
         )}
+        {!loading && !error && (
+          <Pagination page={facultyPage} pageSize={10} totalItems={filteredData.length} onPageChange={setFacultyPage} />
+        )}
 
         {/* No Results */}
         {filteredData.length === 0 && !loading && !error && (
@@ -349,13 +388,16 @@ function Faculty() {
         {/* Modal */}
         {isModalOpen && selectedFaculty && (
           <div className="fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
               {/* Modal Header */}
-              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-700 dark:to-indigo-700 text-white p-6">
+              <div className="border-b border-blue-700 bg-blue-600 p-6 text-white dark:bg-blue-700">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-bold">{selectedFaculty.name} Details</h2>
-                    <p className="text-blue-100 dark:text-blue-200">Room {selectedFaculty.room} • {selectedFaculty.floor}</p>
+                    <p className="text-blue-100">
+                      {selectedFaculty.department}
+                      {selectedFaculty.room !== 'Not in room' ? ` | Room ${selectedFaculty.room}` : ''}
+                    </p>
                   </div>
                   <button
                     onClick={() => setIsModalOpen(false)}
@@ -391,6 +433,24 @@ function Faculty() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div>
+                  <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Active Teaching Schedule</h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        {selectedFacultySchedules.length
+                          ? `${selectedFacultySchedules.length} ${selectedFacultySchedules.length === 1 ? 'class' : 'classes'} in the active schedule`
+                          : 'No active schedule is assigned to this faculty member.'}
+                      </p>
+                    </div>
+                  </div>
+                  <ScheduleDayView
+                    key={selectedFaculty.id}
+                    schedules={selectedFacultySchedules}
+                    emptyMessage="No active schedule is assigned to this faculty member."
+                  />
                 </div>
 
               </div>
