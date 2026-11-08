@@ -114,6 +114,30 @@ npm run dev:stg
 npm run dev:prod
 ```
 
+### Local Firebase emulators
+
+To keep web development completely separate from staging and production, open two
+PowerShell terminals in the project folder. Start the local Auth and Realtime
+Database emulators in the first terminal:
+
+```powershell
+npm run emulators
+```
+
+Then start the app in emulator mode in the second terminal:
+
+```powershell
+npm run dev:local
+```
+
+Open `http://localhost:5173`. The local Auth emulator is at
+`http://127.0.0.1:9099`, the Realtime Database emulator is at
+`http://127.0.0.1:9000`, and the emulator dashboard is at
+`http://127.0.0.1:4000`. Emulator data is isolated from cloud projects and is
+cleared when the emulator is restarted unless you configure data import/export.
+New local accounts must be registered in the emulator; cloud accounts are not
+copied over.
+
 Use `npm run dev:stg:full` when testing server-backed Admin actions. The plain
 `npm run dev:stg` command starts only Vite and cannot execute files in `api/`.
 

@@ -8,6 +8,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --mode staging",
+    "dev:local": "vite --mode emulator",
+    "emulators": "firebase emulators:start --only auth,database --project fac-loc-local",
     "dev:stg": "vite --mode staging",
     "dev:stg:full": "node scripts/local-vercel-dev.js staging",
     "dev:prod": "vite --mode production",

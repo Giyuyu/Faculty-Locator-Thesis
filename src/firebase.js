@@ -1,7 +1,7 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getDatabase } from "firebase/database";
+import { connectAuthEmulator, getAuth } from "firebase/auth";
+import { connectDatabaseEmulator, getDatabase } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -22,6 +22,20 @@ const auth = getAuth(app);
 
 // Initialize Realtime Database
 const database = getDatabase(app);
+
+const useFirebaseEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
+const connectedAuthInstances = new WeakSet();
+
+export function connectAuthInstanceToEmulator(authInstance) {
+  if (!useFirebaseEmulator || connectedAuthInstances.has(authInstance)) return;
+  connectAuthEmulator(authInstance, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectedAuthInstances.add(authInstance);
+}
+
+if (useFirebaseEmulator) {
+  connectAuthInstanceToEmulator(auth);
+  connectDatabaseEmulator(database, '127.0.0.1', 9000);
+}
 
 // Export the instances for use in other parts of the app
 export { app, auth, database, firebaseConfig };

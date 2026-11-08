@@ -35,7 +35,7 @@ import {
   FaUsers,
 } from 'react-icons/fa';
 import { MdApps } from 'react-icons/md';
-import { auth, database, firebaseConfig } from '../../firebase';
+import { auth, connectAuthInstanceToEmulator, database, firebaseConfig } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import Pagination, { paginateItems } from '../../components/Pagination';
@@ -354,6 +354,7 @@ function effectiveUserPermissions(rolePermissions, userPermissions, userId, role
 async function createProvisionedAuthUser(email, password) {
   const secondaryApp = initializeApp(firebaseConfig, `admin-provision-${Date.now()}-${Math.random()}`);
   const secondaryAuth = getAuth(secondaryApp);
+  connectAuthInstanceToEmulator(secondaryAuth);
 
   try {
     const credential = await createUserWithEmailAndPassword(secondaryAuth, email, password);

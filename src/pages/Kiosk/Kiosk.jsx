@@ -22,7 +22,10 @@ import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData, facultyDisplayName, getReflectableSchedules } from '../../utils/trackerData';
 import ScheduleDayView from '../../components/ScheduleDayView';
+import Pagination, { paginateItems } from '../../components/Pagination';
 import { sortSchedulesByDayAndTime } from '../../utils/scheduleDisplay';
+
+const KIOSK_PAGE_SIZE = 12;
 
 const facultyStatusStyles = {
   'In-Class': 'bg-blue-50 text-blue-700 ring-blue-200',
@@ -128,6 +131,7 @@ function Kiosk() {
   const [activeView, setActiveView] = useState('faculty');
   const [statusFilter, setStatusFilter] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [directoryPage, setDirectoryPage] = useState(1);
   const [facultyLocations, setFacultyLocations] = useState([]);
   const [roomLocations, setRoomLocations] = useState([]);
   const [scheduleRows, setScheduleRows] = useState([]);
@@ -315,6 +319,7 @@ function Kiosk() {
 
   const switchView = (view) => {
     setActiveView(view);
+    setDirectoryPage(1);
     setSearchTerm('');
     setStatusFilter('All');
     setSelectedFaculty(null);
@@ -326,6 +331,14 @@ function Kiosk() {
   };
 
   const visibleCount = activeView === 'faculty' ? filteredFaculty.length : filteredRooms.length;
+  const visibleFaculty = useMemo(
+    () => paginateItems(filteredFaculty, directoryPage, KIOSK_PAGE_SIZE),
+    [filteredFaculty, directoryPage],
+  );
+  const visibleRooms = useMemo(
+    () => paginateItems(filteredRooms, directoryPage, KIOSK_PAGE_SIZE),
+    [filteredRooms, directoryPage],
+  );
   const totalCount = activeView === 'faculty' ? facultyLocations.length : roomLocations.length;
   const copy = kioskCopy[language];
 
@@ -434,16 +447,16 @@ function Kiosk() {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fbff_0%,#eef4fb_100%)] text-slate-950">
       <header className="sticky top-0 z-40 border-t-4 border-yellow-400 border-b border-slate-200 bg-white text-slate-950 shadow-sm">
-        <div className="mx-auto flex min-h-20 max-w-[1720px] items-center gap-4 px-4 py-2 lg:px-8">
+        <div className="mx-auto flex min-h-16 max-w-[1720px] items-center gap-3 px-4 py-2 lg:px-8">
           <button
             type="button"
             onClick={() => setHasStarted(false)}
             className="flex shrink-0 items-center gap-3 rounded-md text-left focus:outline-none focus:ring-2 focus:ring-yellow-400"
           >
-            <img src={logo} alt="STI Locator" className="h-12 w-auto rounded-md" />
+            <img src={logo} alt="STI Locator" className="h-10 w-auto rounded-md" />
             <div className="hidden sm:block">
-              <p className="text-xl font-bold text-slate-950">STI Locator</p>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-600">Campus Kiosk</p>
+                <p className="text-lg font-bold text-slate-950">STI Locator</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-600">Campus Kiosk</p>
             </div>
           </button>
 
@@ -451,21 +464,21 @@ function Kiosk() {
             <button
               type="button"
               onClick={() => switchView('faculty')}
-              className={`flex min-h-12 min-w-36 items-center justify-center gap-2 px-5 text-base font-bold transition-colors ${
+              className={`flex min-h-11 min-w-32 items-center justify-center gap-2 px-4 text-sm font-bold transition-colors ${
                 activeView === 'faculty' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-blue-700'
               }`}
             >
-              <MdPeople className="h-6 w-6" />
+              <MdPeople className="h-5 w-5" />
               {copy.faculty}
             </button>
             <button
               type="button"
               onClick={() => switchView('rooms')}
-              className={`flex min-h-12 min-w-36 items-center justify-center gap-2 border-l border-slate-200 px-5 text-base font-bold transition-colors ${
+              className={`flex min-h-11 min-w-32 items-center justify-center gap-2 border-l border-slate-200 px-4 text-sm font-bold transition-colors ${
                 activeView === 'rooms' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-blue-700'
               }`}
             >
-              <MdMeetingRoom className="h-6 w-6" />
+              <MdMeetingRoom className="h-5 w-5" />
               {copy.rooms}
             </button>
           </div>
@@ -501,15 +514,15 @@ function Kiosk() {
         <section className="mx-auto max-w-[1660px]">
           <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             <div className="absolute inset-x-0 top-0 h-1 bg-blue-600" />
-            <div className="grid gap-4 border-b border-slate-200 px-5 py-5 lg:grid-cols-[minmax(310px,0.65fr)_minmax(440px,1.45fr)] lg:items-center lg:px-6">
+            <div className="grid gap-3 border-b border-slate-200 px-4 py-4 lg:grid-cols-[minmax(270px,0.65fr)_minmax(400px,1.45fr)] lg:items-center lg:px-5">
               <div>
                 <div className="flex items-center gap-4">
-                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white shadow-[inset_0_-3px_0_rgba(15,23,42,0.18)]">
-                    {activeView === 'faculty' ? <MdPeople className="h-7 w-7" /> : <MdMeetingRoom className="h-7 w-7" />}
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white shadow-[inset_0_-3px_0_rgba(15,23,42,0.18)]">
+                    {activeView === 'faculty' ? <MdPeople className="h-6 w-6" /> : <MdMeetingRoom className="h-6 w-6" />}
                   </span>
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">{copy.directory}</p>
-                    <h1 className="mt-1 text-2xl font-bold text-slate-950">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600">{copy.directory}</p>
+                    <h1 className="mt-0.5 text-xl font-bold text-slate-950">
                       {activeView === 'faculty' ? copy.facultyTitle : copy.roomTitle}
                     </h1>
                   </div>
@@ -517,19 +530,23 @@ function Kiosk() {
               </div>
 
               <div className="relative">
-                <MdSearch className="pointer-events-none absolute left-5 top-1/2 h-6 w-6 -translate-y-1/2 text-slate-500" />
+                <MdSearch className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
                 <input
                   type="search"
                   value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setDirectoryPage(1);
+                  }}
                   placeholder={activeView === 'faculty' ? copy.facultySearch : copy.roomSearch}
-                  className="h-14 w-full rounded-md border border-slate-300 bg-slate-50 pl-14 pr-5 text-base outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                  className="h-12 w-full rounded-md border border-slate-300 bg-slate-50 pl-12 pr-4 text-sm outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
                 />
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-              <div className="flex flex-1 flex-wrap gap-2">
+            <div className="flex flex-col gap-2 px-4 py-3 lg:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-1 [scrollbar-width:thin]" role="group" aria-label="Filter by status">
                 {(activeView === 'faculty'
                   ? [
                     ['All', facultyCounts.total, MdPeople],
@@ -547,42 +564,43 @@ function Kiosk() {
                     <button
                       key={label}
                       type="button"
-                      onClick={() => setStatusFilter(label)}
-                      className={`flex min-h-14 min-w-40 flex-1 items-center gap-3 rounded-md border px-4 text-sm font-bold transition lg:max-w-56 ${
+                      onClick={() => {
+                        setStatusFilter(label);
+                        setDirectoryPage(1);
+                      }}
+                      className={`flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-3 text-xs font-bold transition ${
                         statusFilter === label
                           ? activeFilterStyles[label]
                           : 'border-slate-200 bg-white text-slate-600 hover:-translate-y-px hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800'
                       }`}
                     >
-                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
                         statusFilter === label ? activeFilterIconStyles[label] : 'bg-slate-50 text-slate-600'
                       }`}
                       >
-                        {React.createElement(Icon, { className: 'h-5 w-5' })}
+                        {React.createElement(Icon, { className: 'h-4 w-4' })}
                       </span>
                       {label}
-                      <span className="ml-auto text-base font-bold tabular-nums">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold tabular-nums text-slate-600">
                         {count}
                       </span>
                     </button>
                   ))}
-              </div>
-
-              <div className="flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-500">
-                <span className="flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white">
-                  <span className="h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-[0_0_0_5px_rgba(16,185,129,0.12)]" />
-                </span>
-                <div>
-                  <p className="font-bold uppercase text-slate-700">{copy.live}</p>
-                  {lastSynced && <p className="font-normal">as of {formatClock(lastSynced)}</p>}
                 </div>
+                <p className="hidden shrink-0 items-center gap-2 text-xs font-semibold text-emerald-700 sm:flex">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  {copy.live}
+                  {lastSynced && <span className="font-normal text-slate-500">| {formatClock(lastSynced)}</span>}
+                </p>
               </div>
             </div>
           </div>
 
-          <div className="mt-4 flex items-center justify-between px-1">
-            <p className="text-sm font-medium text-slate-600">
-              Showing {visibleCount} of {totalCount} {activeView === 'faculty' ? 'faculty members' : 'rooms'}
+          <div className="mt-3 flex min-h-10 items-center justify-between gap-3 px-1">
+            <p className="text-xs font-medium text-slate-600 sm:text-sm">
+              {visibleCount
+                ? `Showing ${((directoryPage - 1) * KIOSK_PAGE_SIZE) + 1}-${Math.min(directoryPage * KIOSK_PAGE_SIZE, visibleCount)} of ${visibleCount} ${activeView === 'faculty' ? 'faculty members' : 'rooms'}${visibleCount !== totalCount ? ` | ${totalCount} total` : ''}`
+                : `0 ${activeView === 'faculty' ? 'faculty members' : 'rooms'} found`}
             </p>
             {(searchTerm || statusFilter !== 'All') && (
               <button
@@ -590,6 +608,7 @@ function Kiosk() {
                 onClick={() => {
                   setSearchTerm('');
                   setStatusFilter('All');
+                  setDirectoryPage(1);
                 }}
                 className="text-sm font-bold text-blue-700 hover:text-blue-900"
               >
@@ -628,7 +647,7 @@ function Kiosk() {
 
           {!loading && !error && activeView === 'faculty' && (
             <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-              {filteredFaculty.map((faculty) => (
+              {visibleFaculty.map((faculty) => (
                 <button
                   key={faculty.id}
                   type="button"
@@ -708,7 +727,7 @@ function Kiosk() {
 
           {!loading && !error && activeView === 'rooms' && (
             <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-              {filteredRooms.map((room) => {
+              {visibleRooms.map((room) => {
                 const displayStatus = normalizeRoomStatus(room);
                 return (
                   <button
@@ -766,6 +785,17 @@ function Kiosk() {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {!loading && !error && visibleCount > KIOSK_PAGE_SIZE && (
+            <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <Pagination
+                page={directoryPage}
+                pageSize={KIOSK_PAGE_SIZE}
+                totalItems={visibleCount}
+                onPageChange={setDirectoryPage}
+              />
             </div>
           )}
 
