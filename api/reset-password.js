@@ -12,6 +12,18 @@ const PASSWORD_GROUPS = [
 const PASSWORD_ALPHABET = PASSWORD_GROUPS.join('');
 const RESET_COOLDOWN_MS = 30_000;
 
+function setCors(request, response) {
+  const origin = String(request.headers.origin || '');
+  const allowedOrigin = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)
+    || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+  if (allowedOrigin) {
+    response.setHeader('Access-Control-Allow-Origin', origin);
+    response.setHeader('Vary', 'Origin');
+  }
+  response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+}
+
 function json(response, status, body) {
   response.status(status);
   response.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -71,7 +83,32 @@ function getAdminApp() {
   });
 }
 
+async function findUserRecord(database, userId) {
+  const directRef = database.ref(`users/${userId}`);
+  const directSnapshot = await directRef.get();
+  if (directSnapshot.exists()) {
+    return { ref: directRef, key: userId, value: directSnapshot.val() || {} };
+  }
+
+  const linkedSnapshot = await database.ref('users')
+    .orderByChild('user_id')
+    .equalTo(userId)
+    .limitToFirst(1)
+    .get();
+  if (!linkedSnapshot.exists()) return null;
+
+  const [key, value] = Object.entries(linkedSnapshot.val() || {})[0] || [];
+  return key
+    ? { ref: database.ref(`users/${key}`), key, value: value || {} }
+    : null;
+}
+
 export default async function handler(request, response) {
+  setCors(request, response);
+  if (request.method === 'OPTIONS') {
+    response.status(204).end();
+    return;
+  }
   if (request.method !== 'POST') {
     response.setHeader('Allow', 'POST');
     return json(response, 405, { error: 'method-not-allowed' });
@@ -93,21 +130,17 @@ export default async function handler(request, response) {
     const database = getDatabase(app);
     const callerToken = await adminAuth.verifyIdToken(authorization.slice(7), true);
 
-    if (callerToken.uid === targetUid) {
-      return json(response, 400, { error: 'use-profile-password-change' });
-    }
-
-    const callerSnapshot = await database.ref(`users/${callerToken.uid}`).get();
-    const caller = callerSnapshot.val() || {};
+    const callerRecord = await findUserRecord(database, callerToken.uid);
+    const caller = callerRecord?.value || {};
     if (String(caller.status || '').toLowerCase() !== 'active' || !normalizeRoles(caller).includes('admin')) {
       return json(response, 403, { error: 'admin-required' });
     }
 
-    const targetRef = database.ref(`users/${targetUid}`);
-    const targetSnapshot = await targetRef.get();
-    if (!targetSnapshot.exists()) {
+    const targetRecord = await findUserRecord(database, targetUid);
+    if (!targetRecord) {
       return json(response, 404, { error: 'user-not-found' });
     }
+    const targetRef = targetRecord.ref;
 
     const lockUntil = Date.now() + RESET_COOLDOWN_MS;
     const lockResult = await targetRef.child('password_reset_lock_until').transaction((current) => {
@@ -122,15 +155,35 @@ export default async function handler(request, response) {
     try {
       authUser = await adminAuth.getUser(targetUid);
     } catch (error) {
-      await targetRef.child('password_reset_lock_until').remove();
       if (error?.code === 'auth/user-not-found') {
-        return json(response, 404, { error: 'auth-user-not-found' });
+        const targetEmail = targetRecord.value?.email || targetRecord.value?.username;
+        if (targetEmail) {
+          try {
+            authUser = await adminAuth.getUserByEmail(targetEmail);
+          } catch (emailLookupError) {
+            await targetRef.child('password_reset_lock_until').remove();
+            if (emailLookupError?.code === 'auth/user-not-found') {
+              return json(response, 404, { error: 'auth-user-not-found' });
+            }
+            throw emailLookupError;
+          }
+        } else {
+          await targetRef.child('password_reset_lock_until').remove();
+          return json(response, 404, { error: 'auth-user-not-found' });
+        }
+      } else {
+        await targetRef.child('password_reset_lock_until').remove();
+        throw error;
       }
-      throw error;
+    }
+
+    if (callerToken.uid === authUser.uid) {
+      await targetRef.child('password_reset_lock_until').remove();
+      return json(response, 400, { error: 'use-profile-password-change' });
     }
 
     const temporaryPassword = generateTemporaryPassword();
-    await adminAuth.updateUser(targetUid, { password: temporaryPassword });
+    await adminAuth.updateUser(authUser.uid, { password: temporaryPassword });
 
     let auditSaved = true;
     try {
@@ -146,7 +199,7 @@ export default async function handler(request, response) {
     }
 
     return json(response, 200, {
-      email: authUser.email || targetSnapshot.val()?.username || '',
+      email: authUser.email || targetRecord.value?.username || '',
       temporaryPassword,
       auditSaved,
     });

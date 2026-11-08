@@ -681,16 +681,6 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       final raw = await loadMobileData();
       final data = AppData.from(raw);
-      final authUid = locatorAuth.currentUser?.uid ?? '';
-      final authenticatedRecord = asStringMap(asMap(raw['users'])[authUid]);
-      if (authenticatedRecord['password_change_required'] == true) {
-        await locatorAuth.signOut();
-        if (!mounted) return;
-        _snack(
-          'Change your temporary password from the web profile before using the mobile app.',
-        );
-        return;
-      }
       final user = await authenticateMobileUser(email, data.raw);
       if (!mounted) return;
       if (user == null) {
@@ -1833,9 +1823,97 @@ class SchedulesList extends StatelessWidget {
           icon: Icons.event_note_rounded,
         ),
         const SizedBox(height: 16),
-        ...schedules.map((schedule) => ScheduleTile(schedule: schedule)),
-        if (schedules.isEmpty) EmptyState(message: emptyMessage),
+        ScheduleDayGroups(schedules: schedules, emptyMessage: emptyMessage),
       ],
+    );
+  }
+}
+
+class ScheduleDayGroups extends StatelessWidget {
+  const ScheduleDayGroups({
+    super.key,
+    required this.schedules,
+    this.emptyMessage = 'No schedules found.',
+  });
+
+  final List<ScheduleEntry> schedules;
+  final String emptyMessage;
+
+  static const orderedDays = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    if (schedules.isEmpty) return EmptyState(message: emptyMessage);
+
+    final grouped = <String, List<ScheduleEntry>>{};
+    for (final schedule in schedules) {
+      final days = normalizeDays(schedule.day);
+      for (final day in days.isEmpty ? [schedule.day] : days) {
+        grouped.putIfAbsent(day, () => []).add(schedule);
+      }
+    }
+    for (final entries in grouped.values) {
+      entries.sort((a, b) {
+        final aTime = parseMinutes(a.startTime) ?? 1 << 20;
+        final bTime = parseMinutes(b.startTime) ?? 1 << 20;
+        return aTime.compareTo(bTime);
+      });
+    }
+    final days = grouped.keys.toList()
+      ..sort((a, b) {
+        final aIndex = orderedDays.indexOf(a);
+        final bIndex = orderedDays.indexOf(b);
+        if (aIndex < 0 && bIndex < 0) return a.compareTo(b);
+        if (aIndex < 0) return 1;
+        if (bIndex < 0) return -1;
+        return aIndex.compareTo(bIndex);
+      });
+
+    return Column(
+      children: days.map((day) {
+        final entries = grouped[day]!;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      day,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Palette.text,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${entries.length} ${entries.length == 1 ? 'class' : 'classes'}',
+                    style: const TextStyle(
+                      color: Palette.muted,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 20),
+              ...entries.map(
+                (schedule) => ScheduleTile(schedule: schedule, showDay: false),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }
@@ -2043,9 +2121,10 @@ class _LegacyScheduleTile extends StatelessWidget {
 }
 
 class ScheduleTile extends StatelessWidget {
-  const ScheduleTile({super.key, required this.schedule});
+  const ScheduleTile({super.key, required this.schedule, this.showDay = true});
 
   final ScheduleEntry schedule;
+  final bool showDay;
 
   @override
   Widget build(BuildContext context) {
@@ -2092,7 +2171,8 @@ class ScheduleTile extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _MetaChip(icon: Icons.today_rounded, label: schedule.day),
+              if (showDay)
+                _MetaChip(icon: Icons.today_rounded, label: schedule.day),
               _MetaChip(icon: Icons.groups_outlined, label: schedule.section),
               _MetaChip(
                 icon: Icons.meeting_room_outlined,
@@ -3451,9 +3531,10 @@ void showScheduleSheet(
             style: const TextStyle(color: Palette.muted),
           ),
           const SizedBox(height: 16),
-          ...schedules.map((schedule) => ScheduleTile(schedule: schedule)),
-          if (schedules.isEmpty)
-            const EmptyState(message: 'No schedule assigned.'),
+          ScheduleDayGroups(
+            schedules: schedules,
+            emptyMessage: 'No schedule assigned.',
+          ),
         ],
       ),
     ),
@@ -3627,8 +3708,24 @@ bool isScheduleNow(ScheduleEntry schedule) {
 
 List<String> normalizeDays(String value) {
   final compact = value.toUpperCase().replaceAll(RegExp(r'[^A-Z]'), '');
-  if (compact == 'TTH' || compact == 'TUTH') return ['Tuesday', 'Thursday'];
-  if (compact == 'MWF') return ['Monday', 'Wednesday', 'Friday'];
+  final compactDays = <String, List<String>>{
+    'M': ['Monday'],
+    'T': ['Tuesday'],
+    'W': ['Wednesday'],
+    'TH': ['Thursday'],
+    'F': ['Friday'],
+    'S': ['Saturday'],
+    'SU': ['Sunday'],
+    'MT': ['Monday', 'Tuesday'],
+    'MW': ['Monday', 'Wednesday'],
+    'MF': ['Monday', 'Friday'],
+    'MTH': ['Monday', 'Thursday'],
+    'TF': ['Tuesday', 'Friday'],
+    'TTH': ['Tuesday', 'Thursday'],
+    'TUTH': ['Tuesday', 'Thursday'],
+    'MWF': ['Monday', 'Wednesday', 'Friday'],
+  };
+  if (compactDays.containsKey(compact)) return compactDays[compact]!;
   final map = {
     'M': 'Monday',
     'MON': 'Monday',
@@ -3643,6 +3740,7 @@ List<String> normalizeDays(String value) {
     'FRI': 'Friday',
     'SA': 'Saturday',
     'SAT': 'Saturday',
+    'S': 'Saturday',
     'SU': 'Sunday',
     'SUN': 'Sunday',
   };

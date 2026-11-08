@@ -1,6 +1,14 @@
 {
-  "devCommand": "vite --mode staging",
+  "devCommand": "node scripts/vite-vercel-dev.js",
   "headers": [
+    {
+      "source": "/templates/sti-locator-batch-account-template.xlsx",
+      "headers": [
+        { "key": "Content-Type", "value": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        { "key": "Content-Disposition", "value": "attachment; filename=\"sti-locator-batch-account-template.xlsx\"" },
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [

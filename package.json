@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite --mode staging",
     "dev:stg": "vite --mode staging",
+    "dev:stg:full": "node scripts/local-vercel-dev.js staging",
     "dev:prod": "vite --mode production",
     "build": "node scripts/vercel-build.js",
     "build:stg": "vite build --mode staging",

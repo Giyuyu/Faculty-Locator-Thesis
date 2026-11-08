@@ -14,6 +14,7 @@ import {
   setThemeSetting,
   signOutCurrentUser,
 } from '../../utils/profileActions';
+import { resolveLinkedProfile } from '../../utils/profileIdentity';
 
 const emptyProfile = {
   first_name: '',
@@ -22,6 +23,7 @@ const emptyProfile = {
   department: '',
   email: '',
   student_number: '',
+  faculty_id: '',
 };
 
 function profileName(profile, fallback) {
@@ -78,18 +80,46 @@ function Profile() {
       const userRecord = userSnapshot?.exists?.() ? userSnapshot.val() : {};
       const faculties = facultiesSnapshot.exists() ? facultiesSnapshot.val() : {};
       const students = studentsSnapshot.exists() ? studentsSnapshot.val() : {};
-      const linkedFaculty = Object.entries(faculties).find(([, item]) => item?.user_id === userId);
-      const linkedStudent = Object.entries(students).find(([, item]) => item?.user_id === userId);
-      const linked = linkedFaculty || linkedStudent;
-      const [profileKey, profileData] = linked || ['', {}];
+      const linked = resolveLinkedProfile({
+        user: userRecord,
+        userId,
+        email: currentUser.email || currentUser.username,
+        faculties,
+        students,
+        preferredType: currentUser.roleIds?.includes('student') && !currentUser.roleIds?.includes('faculty')
+          ? 'students'
+          : 'faculties',
+      });
+      const profileKey = linked?.key || '';
+      const profileData = linked?.profile || {};
 
       setForm({
         username: userRecord.username || currentUser.username || '',
-        profileType: linkedFaculty ? 'faculties' : linkedStudent ? 'students' : '',
+        profileType: linked?.type || '',
         profileKey,
         ...emptyProfile,
         ...profileData,
+        email: profileData.email || userRecord.email || userRecord.username || currentUser.email || '',
+        faculty_id: linked?.type === 'faculties'
+          ? profileData.faculty_id || userRecord.faculty_id || profileKey
+          : '',
       });
+      if (linked && (
+        currentUser.id !== linked.key
+        || currentUser.profileType !== linked.type
+        || currentUser.name !== profileName(linked.profile, currentUser.name || currentUser.username)
+      )) {
+        const nextUser = {
+          ...currentUser,
+          id: linked.key,
+          profileType: linked.type,
+          facultyId: linked.profile.faculty_id || currentUser.facultyId || '',
+          studentNumber: linked.profile.student_number || currentUser.studentNumber || '',
+          name: profileName(linked.profile, currentUser.name || currentUser.username),
+        };
+        localStorage.setItem('currentUser', JSON.stringify(nextUser));
+        setCurrentUser(nextUser);
+      }
       setLoading(false);
     };
 
@@ -125,6 +155,7 @@ function Profile() {
 
     if (form.profileType && form.profileKey) {
       const profileUpdate = {
+        user_id: userId,
         first_name: form.first_name,
         middle_name: form.middle_name,
         last_name: form.last_name,
@@ -134,10 +165,16 @@ function Profile() {
 
       if (form.profileType === 'faculties') {
         profileUpdate.department = form.department;
+        updates[`users/${userId}/profile_type`] = 'faculties';
+        updates[`users/${userId}/profile_id`] = form.profileKey;
+        updates[`users/${userId}/faculty_id`] = form.faculty_id || form.profileKey;
       }
 
       if (form.profileType === 'students') {
         profileUpdate.student_number = form.student_number;
+        updates[`users/${userId}/profile_type`] = 'students';
+        updates[`users/${userId}/profile_id`] = form.profileKey;
+        updates[`users/${userId}/student_number`] = form.student_number;
       }
 
       Object.entries(profileUpdate).forEach(([key, value]) => {
@@ -287,10 +324,16 @@ function Profile() {
                       <input type="email" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value={form.email} onChange={(event) => updateField('email', event.target.value)} disabled={!form.profileType} />
                     </label>
                     {form.profileType === 'faculties' && (
+                      <>
+                        <label className="block">
+                          <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-200">Faculty ID</span>
+                          <input className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300" value={form.faculty_id} readOnly />
+                        </label>
                       <label className="block">
                         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-200">Department</span>
                         <input className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value={form.department} onChange={(event) => updateField('department', event.target.value)} />
                       </label>
+                      </>
                     )}
                     {form.profileType === 'students' && (
                       <label className="block">

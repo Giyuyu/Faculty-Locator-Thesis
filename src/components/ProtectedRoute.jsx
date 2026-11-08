@@ -8,7 +8,7 @@ import {
   loadAuthenticatedSession,
 } from '../utils/authSession';
 
-function ProtectedRoute({ children, permission }) {
+function ProtectedRoute({ children, permission, anyPermissions = [] }) {
   const location = useLocation();
   const [state, setState] = useState({ loading: true, session: null });
 
@@ -46,7 +46,10 @@ function ProtectedRoute({ children, permission }) {
   if (state.session.passwordChangeRequired && location.pathname !== '/profile') {
     return <Navigate to="/profile?password=required" replace />;
   }
-  if (permission && !state.session.permissions?.[permission]) return <Navigate to="/home" replace />;
+  const requiredPermissions = [permission, ...anyPermissions].filter(Boolean);
+  if (requiredPermissions.length && !requiredPermissions.some((requiredPermission) => (
+    state.session.permissions?.[requiredPermission]
+  ))) return <Navigate to="/home" replace />;
   return children;
 }
 

@@ -17,11 +17,12 @@ import {
   MdSearch,
   MdTouchApp,
 } from 'react-icons/md';
-import { signInAnonymously } from 'firebase/auth';
-import { auth, database } from '../../firebase';
+import { database } from '../../firebase';
 import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData, facultyDisplayName, getReflectableSchedules } from '../../utils/trackerData';
+import ScheduleDayView from '../../components/ScheduleDayView';
+import { sortSchedulesByDayAndTime } from '../../utils/scheduleDisplay';
 
 const facultyStatusStyles = {
   'In-Class': 'bg-blue-50 text-blue-700 ring-blue-200',
@@ -93,16 +94,6 @@ const kioskCopy = {
   },
 };
 
-const dayOrder = {
-  Monday: 1,
-  Tuesday: 2,
-  Wednesday: 3,
-  Thursday: 4,
-  Friday: 5,
-  Saturday: 6,
-  Sunday: 7,
-};
-
 const normalizeRoomStatus = (room) => {
   const configuredStatus = String(room.roomStatus || '').toLowerCase();
   if (configuredStatus.includes('maintenance')) return 'Under Maintenance';
@@ -147,25 +138,6 @@ function Kiosk() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
-  const [authReady, setAuthReady] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    const authenticateKiosk = async () => {
-      try {
-        if (!auth.currentUser) await signInAnonymously(auth);
-        if (active) setAuthReady(true);
-      } catch (authError) {
-        console.error('Unable to authenticate kiosk:', authError);
-        if (active) {
-          setLoading(false);
-          setError('Kiosk access is not configured. Enable Firebase Anonymous Authentication.');
-        }
-      }
-    };
-    authenticateKiosk();
-    return () => { active = false; };
-  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
@@ -208,17 +180,19 @@ function Kiosk() {
   }, [hasStarted]);
 
   useEffect(() => {
-    if (!authReady) return undefined;
     const unsubscribe = subscribeToPaths(database, [
-      'public_faculties', 'faculty_status', 'faculty_login_sessions', 'rooms',
+      'public_faculties', 'faculties', 'faculty_status', 'faculty_login_sessions', 'rooms',
       'subjects', 'schedules', 'schedule_uploads',
     ], (data) => {
       try {
-        const trackerSource = { ...data, faculties: data.public_faculties || {} };
+        const publicFaculties = data.public_faculties || {};
+        const faculties = Object.keys(publicFaculties).length > 0
+          ? publicFaculties
+          : (data.faculties || {});
+        const trackerSource = { ...data, faculties };
         const trackerData = buildTrackerData(trackerSource);
         const subjects = data.subjects || {};
         const rooms = data.rooms || {};
-        const faculties = data.public_faculties || {};
         const facultyById = Object.values(faculties).reduce((acc, faculty) => {
           if (faculty?.faculty_id) acc[faculty.faculty_id] = faculty;
           return acc;
@@ -236,7 +210,7 @@ function Kiosk() {
             facultyId: schedule.faculty_id,
             facultyName: facultyDisplayName(faculty),
             subject: subject.subject_name || subject.subject_code || schedule.subject_name || schedule.subject_id || 'TBD',
-            subjectCode: subject.subject_code || schedule.subject_code || '',
+            courseCode: schedule.course_code || subject.subject_code || schedule.subject_code || '',
             day: schedule.day || 'TBD',
             startTime: schedule.start_time || 'TBD',
             endTime: schedule.end_time || 'TBD',
@@ -245,14 +219,11 @@ function Kiosk() {
             term: schedule.term || schedule.semester || '',
             schoolYear: schedule.school_year || '',
           };
-        }).sort((a, b) => (
-          (dayOrder[a.day] || 99) - (dayOrder[b.day] || 99)
-          || String(a.startTime).localeCompare(String(b.startTime))
-        ));
+        });
 
         setFacultyLocations(trackerData.facultyLocations);
         setRoomLocations(trackerData.roomLocations);
-        setScheduleRows(schedules);
+        setScheduleRows(sortSchedulesByDayAndTime(schedules));
         setLastSynced(new Date());
         setLoading(false);
         setError('');
@@ -267,7 +238,7 @@ function Kiosk() {
     });
 
     return () => unsubscribe();
-  }, [authReady]);
+  }, []);
 
   useEffect(() => {
     if (!selectedFaculty && !selectedRoom) return undefined;
@@ -862,39 +833,13 @@ function Kiosk() {
                 </span>
               </div>
 
-              <div className="mt-4 overflow-x-auto rounded-lg border border-blue-100 bg-white shadow-sm">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-blue-50 text-left text-xs font-bold uppercase tracking-[0.1em] text-blue-800">
-                    <tr>
-                      <th className="px-4 py-3">Day</th>
-                      <th className="px-4 py-3">Time</th>
-                      <th className="px-4 py-3">Subject</th>
-                      <th className="px-4 py-3">Section</th>
-                      <th className="px-4 py-3">Room</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {selectedFacultySchedules.map((schedule) => (
-                      <tr key={schedule.scheduleId}>
-                        <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-950">{schedule.day}</td>
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-600">{schedule.startTime} - {schedule.endTime}</td>
-                        <td className="px-4 py-3 text-slate-700">
-                          <p className="font-semibold">{schedule.subject}</p>
-                          {schedule.subjectCode && <p className="text-xs text-slate-400">{schedule.subjectCode}</p>}
-                        </td>
-                        <td className="px-4 py-3 text-slate-600">{schedule.section}</td>
-                        <td className="px-4 py-3 font-semibold text-slate-700">{schedule.room}</td>
-                      </tr>
-                    ))}
-                    {!selectedFacultySchedules.length && (
-                      <tr>
-                        <td colSpan="5" className="px-4 py-10 text-center text-slate-500">
-                          No active schedule is assigned to this faculty member.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="mt-4 rounded-lg border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
+                <ScheduleDayView
+                  key={selectedFaculty.id}
+                  schedules={selectedFacultySchedules}
+                  emptyMessage="No active schedule is assigned to this faculty member."
+                  kiosk
+                />
               </div>
             </div>
           </div>

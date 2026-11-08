@@ -9,6 +9,7 @@ logs/
 .firebase/
 *.bat
 *.xlsx
+!public/templates/sti-locator-batch-account-template.xlsx
 database-debug.log
 firebase-export-*/
 functions/

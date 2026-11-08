@@ -94,6 +94,12 @@ Environment naming is consistent across launchers:
 .\run.bat web-stg
 ```
 
+This starts the complete local staging runtime: the Vite web app, Vercel API routes,
+and the `fac-loc-stg` Firebase connection. Secure Admin features such as Reset
+Password therefore work locally before deployment. The ignored
+`fac-loc-stg-firebase-adminsdk-*.json` service-account file must be present in the
+project root and is never committed to Git.
+
 The browser address is normally:
 
 ```text
@@ -103,12 +109,17 @@ http://localhost:5173
 Manual web commands:
 
 ```powershell
+npm run dev:stg:full
 npm run dev:stg
 npm run dev:prod
 ```
 
+Use `npm run dev:stg:full` when testing server-backed Admin actions. The plain
+`npm run dev:stg` command starts only Vite and cannot execute files in `api/`.
+
 | Command | Firebase project |
 | --- | --- |
+| `npm run dev:stg:full` | `fac-loc-stg` with local API routes |
 | `npm run dev` or `npm run dev:stg` | `fac-loc-stg` |
 | `npm run dev:prod` | `fac-loc` |
 

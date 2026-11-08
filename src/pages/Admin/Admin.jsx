@@ -38,6 +38,7 @@ import { MdApps } from 'react-icons/md';
 import { auth, database, firebaseConfig } from '../../firebase';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
+import Pagination, { paginateItems } from '../../components/Pagination';
 import QuickStartGuide, { ADMIN_GUIDE_STEPS } from '../../components/QuickStartGuide';
 import logo from '../../assets/sti_logo.png';
 import {
@@ -46,6 +47,7 @@ import {
   openUserProfile,
   signOutCurrentUser,
 } from '../../utils/profileActions';
+import { getProfileDisplayName, resolveLinkedProfile } from '../../utils/profileIdentity';
 
 const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -154,11 +156,28 @@ function normalizeHeaderCell(value) {
     .replace(/^_+|_+$/g, '');
 }
 
+const BATCH_HEADER_ALIASES = {
+  role: ['role', 'account_type', 'user_type'],
+  student_number: ['student_number', 'student_no', 'student_id', 'studentid'],
+  faculty_id: ['faculty_id', 'faculty_number', 'employee_id', 'employee_number'],
+  first_name: ['first_name', 'firstname', 'given_name', 'givenname'],
+  middle_name: ['middle_name', 'middlename', 'middle_initial', 'middleinitial'],
+  last_name: ['last_name', 'lastname', 'surname', 'family_name'],
+  department: ['department', 'program'],
+  email: ['email', 'email_address', 'school_email'],
+  password: ['password', 'temporary_password', 'temp_password'],
+};
+
+function batchHeaderKey(value) {
+  const normalized = normalizeHeaderCell(value).replace(/_(required|optional)$/, '');
+  return Object.entries(BATCH_HEADER_ALIASES).find(([, aliases]) => aliases.includes(normalized))?.[0] || normalized;
+}
+
 function getBatchRowsFromSheet(sheet) {
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
   const requiredHeaders = ['role', 'first_name', 'last_name', 'email'];
   const headerRowIndex = rawRows.findIndex((row) => {
-    const headers = row.map(normalizeHeaderCell);
+    const headers = row.map(batchHeaderKey);
     return requiredHeaders.every((header) => headers.includes(header));
   });
 
@@ -166,7 +185,7 @@ function getBatchRowsFromSheet(sheet) {
     throw new Error('Template headers were not found. Please use the STI Locator batch account template.');
   }
 
-  const headers = rawRows[headerRowIndex].map(normalizeHeaderCell);
+  const headers = rawRows[headerRowIndex].map(batchHeaderKey);
   const cell = (row, key) => {
     const index = headers.indexOf(key);
     return index >= 0 ? row[index] : '';
@@ -212,10 +231,12 @@ function SectionPanel({ title, description, action, children }) {
   );
 }
 
-function Field({ label, children }) {
+function Field({ label, required = false, children }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-sm font-medium text-slate-700">{label}</span>
+      <span className="mb-1.5 block text-sm font-medium text-slate-700">
+        {label}{required && <span className="ml-1 text-red-600" aria-label="required">*</span>}
+      </span>
       {children}
     </label>
   );
@@ -355,6 +376,9 @@ function buildUserUpdates(user, form, uploadMeta = null) {
     [`users/${user.uid}`]: {
       user_id: user.uid,
       username: form.email.trim(),
+      first_name: firstName,
+      middle_name: middleName,
+      last_name: lastName,
       role_id: role,
       role_ids: [role],
       status,
@@ -370,6 +394,11 @@ function buildUserUpdates(user, form, uploadMeta = null) {
 
   if (role === 'student') {
     const studentId = sanitizeId(form.studentNumber);
+    Object.assign(updates[`users/${user.uid}`], {
+      profile_type: 'students',
+      profile_id: studentId,
+      student_number: form.studentNumber.trim(),
+    });
     updates[`students/${studentId}`] = {
       student_id: studentId,
       user_id: user.uid,
@@ -377,6 +406,7 @@ function buildUserUpdates(user, form, uploadMeta = null) {
       first_name: firstName,
       middle_name: middleName,
       last_name: lastName,
+      email: form.email.trim(),
       status,
       ...(uploadMeta ? {
         account_upload_id: uploadMeta.uploadId,
@@ -388,6 +418,11 @@ function buildUserUpdates(user, form, uploadMeta = null) {
 
   if (role === 'faculty') {
     const facultyId = sanitizeId(form.facultyId);
+    Object.assign(updates[`users/${user.uid}`], {
+      profile_type: 'faculties',
+      profile_id: facultyId,
+      faculty_id: facultyId,
+    });
     const publicFaculty = {
       faculty_id: facultyId,
       first_name: firstName,
@@ -399,6 +434,8 @@ function buildUserUpdates(user, form, uploadMeta = null) {
     updates[`public_faculties/${facultyId}`] = publicFaculty;
     updates[`faculties/${facultyId}`] = {
       ...publicFaculty,
+      user_id: user.uid,
+      email: form.email.trim(),
       ...(uploadMeta ? {
         account_upload_id: uploadMeta.uploadId,
         school_year: uploadMeta.schoolYear,
@@ -430,30 +467,47 @@ function buildAccountDuplicateIndex(data = {}) {
     usernames: new Set(),
     studentNumbers: new Set(),
     facultyIds: new Set(),
+    usersById: new Map(),
+    usersByEmail: new Map(),
+    studentsByNumber: new Map(),
+    facultiesById: new Map(),
+    students: data.students || {},
+    faculties: data.faculties || {},
   };
 
-  Object.values(data.users || {}).forEach((user) => {
+  Object.entries(data.users || {}).forEach(([key, user]) => {
+    const userId = user?.user_id || key;
     const username = normalizeUniqueValue(user?.username);
     const email = normalizeUniqueValue(user?.email);
+    const account = { key, userId, user: user || {} };
+    if (userId) index.usersById.set(normalizeUniqueValue(userId), account);
     if (username) {
       index.usernames.add(username);
       index.emails.add(username);
+      index.usersByEmail.set(username, account);
     }
     if (email) {
       index.emails.add(email);
       index.usernames.add(email);
+      index.usersByEmail.set(email, account);
     }
   });
 
-  Object.values(data.students || {}).forEach((student) => {
+  Object.entries(data.students || {}).forEach(([key, student]) => {
     const studentNumber = normalizeUniqueValue(student?.student_number || student?.student_id);
-    if (studentNumber) index.studentNumbers.add(studentNumber);
+    if (studentNumber) {
+      index.studentNumbers.add(studentNumber);
+      index.studentsByNumber.set(studentNumber, { key, profile: student });
+    }
   });
 
-  Object.values(data.faculties || {}).forEach((faculty) => {
+  Object.entries(data.faculties || {}).forEach(([key, faculty]) => {
     const facultyId = normalizeUniqueValue(faculty?.faculty_id);
     const email = normalizeUniqueValue(faculty?.email);
-    if (facultyId) index.facultyIds.add(facultyId);
+    if (facultyId) {
+      index.facultyIds.add(facultyId);
+      index.facultiesById.set(facultyId, { key, profile: faculty });
+    }
     if (email) index.emails.add(email);
   });
 
@@ -522,11 +576,13 @@ function buildBatchImportPlan(rows, duplicateIndex) {
     facultyIds: new Map(),
   };
   const acceptedRows = [];
+  const overwriteRows = [];
   const skippedRows = [];
 
   rows.forEach((row, index) => {
     const rowNumber = row.__rowNumber || index + 2;
     const issues = [];
+    const existingIssues = [];
     const validationError = validateUserForm(row);
     const email = normalizeUniqueValue(row.email);
     const studentNumber = normalizeUniqueValue(row.studentNumber);
@@ -536,7 +592,7 @@ function buildBatchImportPlan(rows, duplicateIndex) {
 
     if (email) {
       if (duplicateIndex.emails.has(email) || duplicateIndex.usernames.has(email)) {
-        issues.push(`email already exists (${row.email})`);
+        existingIssues.push(`email already exists (${row.email})`);
       }
       if (seen.emails.has(email)) {
         issues.push(`duplicate email with row ${seen.emails.get(email)} (${row.email})`);
@@ -545,7 +601,7 @@ function buildBatchImportPlan(rows, duplicateIndex) {
 
     if (row.role === 'student' && studentNumber) {
       if (duplicateIndex.studentNumbers.has(studentNumber)) {
-        issues.push(`student number already exists (${row.studentNumber})`);
+        existingIssues.push(`student number already exists (${row.studentNumber})`);
       }
       if (seen.studentNumbers.has(studentNumber)) {
         issues.push(`duplicate student number with row ${seen.studentNumbers.get(studentNumber)} (${row.studentNumber})`);
@@ -554,7 +610,7 @@ function buildBatchImportPlan(rows, duplicateIndex) {
 
     if (row.role === 'faculty' && facultyId) {
       if (duplicateIndex.facultyIds.has(facultyId)) {
-        issues.push(`faculty ID already exists (${row.facultyId})`);
+        existingIssues.push(`faculty ID already exists (${row.facultyId})`);
       }
       if (seen.facultyIds.has(facultyId)) {
         issues.push(`duplicate faculty ID with row ${seen.facultyIds.get(facultyId)} (${row.facultyId})`);
@@ -570,6 +626,28 @@ function buildBatchImportPlan(rows, duplicateIndex) {
       return;
     }
 
+    if (existingIssues.length) {
+      const target = findOverwriteTarget(row, duplicateIndex);
+      if (!target || target.conflict) {
+        skippedRows.push({
+          rowNumber,
+          row,
+          issues: [...existingIssues, target?.conflict || 'Existing account could not be linked safely.'],
+        });
+        return;
+      }
+      overwriteRows.push({
+        row,
+        rowNumber,
+        issues: [...existingIssues, ...(target.warning ? [target.warning] : [])],
+        target,
+      });
+      if (email) seen.emails.set(email, rowNumber);
+      if (row.role === 'student' && studentNumber) seen.studentNumbers.set(studentNumber, rowNumber);
+      if (row.role === 'faculty' && facultyId) seen.facultyIds.set(facultyId, rowNumber);
+      return;
+    }
+
     acceptedRows.push(row);
     if (email) seen.emails.set(email, rowNumber);
     if (row.role === 'student' && studentNumber) seen.studentNumbers.set(studentNumber, rowNumber);
@@ -578,6 +656,7 @@ function buildBatchImportPlan(rows, duplicateIndex) {
 
   return {
     acceptedRows,
+    overwriteRows,
     skippedRows,
   };
 }
@@ -697,12 +776,167 @@ async function fetchAccountDuplicateIndex() {
 }
 
 function getProfileName(user, students, faculties) {
-  const profileSource = user.role_id === 'student' ? students : faculties;
-  const profile = Object.values(profileSource).find((item) => item.user_id === user.user_id);
+  const linked = resolveLinkedProfile({
+    user,
+    userId: user.user_id,
+    email: user.email || user.username,
+    faculties,
+    students,
+    preferredType: user.role_id === 'student' ? 'students' : 'faculties',
+  });
+  const linkedName = getProfileDisplayName(linked?.profile, '');
+  const accountName = [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' ').trim();
+  return linkedName || accountName || user.username || user.user_id;
+}
 
-  if (!profile) return user.username || user.user_id;
+function resolveAccountProfileEntries(userId, user, students, faculties) {
+  const account = user || { user_id: userId };
+  const email = account.email || account.username;
+  const studentLink = resolveLinkedProfile({
+    user: account,
+    userId,
+    email,
+    faculties: {},
+    students,
+    preferredType: 'students',
+  });
+  const facultyLink = resolveLinkedProfile({
+    user: account,
+    userId,
+    email,
+    faculties,
+    students: {},
+    preferredType: 'faculties',
+  });
 
-  return [profile.first_name, profile.middle_name, profile.last_name].filter(Boolean).join(' ') || user.username;
+  return {
+    studentEntry: studentLink?.type === 'students'
+      ? [studentLink.key, studentLink.profile]
+      : null,
+    facultyEntry: facultyLink?.type === 'faculties'
+      ? [facultyLink.key, facultyLink.profile]
+      : null,
+  };
+}
+
+function addProfileDeletionUpdates(updates, studentEntry, facultyEntry) {
+  if (studentEntry) updates[`students/${studentEntry[0]}`] = null;
+  if (!facultyEntry) return;
+
+  const [facultyKey, faculty] = facultyEntry;
+  const facultyId = faculty?.faculty_id || facultyKey;
+  updates[`faculties/${facultyKey}`] = null;
+  updates[`public_faculties/${facultyKey}`] = null;
+  updates[`public_faculties/${facultyId}`] = null;
+}
+
+function addUploadedProfileDeletionUpdates(updates, uploadId, students, faculties) {
+  Object.entries(students || {}).forEach(([studentKey, student]) => {
+    if (student?.account_upload_id === uploadId) {
+      updates[`students/${studentKey}`] = null;
+    }
+  });
+
+  Object.entries(faculties || {}).forEach(([facultyKey, faculty]) => {
+    if (faculty?.account_upload_id === uploadId) {
+      addProfileDeletionUpdates(updates, null, [facultyKey, faculty]);
+    }
+  });
+}
+
+function overwriteRowKey(item) {
+  return `${item?.rowNumber || ''}:${item?.target?.userId || item?.target?.profileKey || ''}`;
+}
+
+async function runWithConcurrency(items, concurrency, worker) {
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  const runners = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      await worker(items[currentIndex], currentIndex);
+    }
+  });
+  await Promise.all(runners);
+}
+
+function findOverwriteTarget(row, duplicateIndex) {
+  const email = normalizeUniqueValue(row.email);
+  const idProfileMatch = row.role === 'student'
+    ? duplicateIndex.studentsByNumber.get(normalizeUniqueValue(row.studentNumber))
+    : duplicateIndex.facultiesById.get(normalizeUniqueValue(row.facultyId));
+  const profileCollection = row.role === 'student'
+    ? duplicateIndex.students
+    : duplicateIndex.faculties;
+  const emailProfileMatch = email
+    ? Object.entries(profileCollection || {}).find(([, profile]) => (
+      normalizeUniqueValue(profile?.email) === email
+    ))
+    : null;
+  const profileMatch = idProfileMatch || (emailProfileMatch
+    ? { key: emailProfileMatch[0], profile: emailProfileMatch[1] }
+    : null);
+  const emailAccount = duplicateIndex.usersByEmail.get(email) || null;
+
+  let profileAccount = null;
+  if (profileMatch?.profile?.user_id) {
+    profileAccount = duplicateIndex.usersById.get(normalizeUniqueValue(profileMatch.profile.user_id)) || null;
+  }
+  if (!profileAccount && profileMatch?.profile?.email) {
+    profileAccount = duplicateIndex.usersByEmail.get(normalizeUniqueValue(profileMatch.profile.email)) || null;
+  }
+  if (!profileAccount && profileMatch) {
+    const candidates = [...duplicateIndex.usersById.values()].filter((account) => {
+      const linked = resolveLinkedProfile({
+        user: account.user,
+        userId: account.userId,
+        email: account.user.email || account.user.username,
+        faculties: duplicateIndex.faculties,
+        students: duplicateIndex.students,
+        preferredType: row.role === 'student' ? 'students' : 'faculties',
+      });
+      return linked?.type === (row.role === 'student' ? 'students' : 'faculties')
+        && linked.key === profileMatch.key;
+    });
+    if (candidates.length === 1) profileAccount = candidates[0];
+  }
+
+  if (emailAccount && profileAccount && emailAccount.userId !== profileAccount.userId) {
+    return {
+      ...emailAccount,
+      profileKey: profileMatch?.key || '',
+      profile: profileMatch?.profile || null,
+      displacedAccount: profileAccount,
+      warning: 'The profile ID is linked to another account and will be reassigned to this email account.',
+    };
+  }
+
+  const account = emailAccount || profileAccount;
+  if (!account && profileMatch) {
+    return {
+      createAccount: true,
+      profileKey: profileMatch.key,
+      profile: profileMatch.profile,
+      warning: 'The profile exists without a linked user account. A new account will be created and linked to it.',
+    };
+  }
+  if (!account) return null;
+  const existingEmail = normalizeUniqueValue(account.user.email || account.user.username);
+  if (email && existingEmail && email !== existingEmail) {
+    return {
+      createAccount: true,
+      profileKey: profileMatch?.key || '',
+      profile: profileMatch?.profile || null,
+      displacedAccount: profileAccount,
+      warning: 'The uploaded email differs from the profile owner. A new account will be created and the profile reassigned.',
+    };
+  }
+  return {
+    ...account,
+    profileKey: profileMatch?.key || '',
+    profile: profileMatch?.profile || null,
+  };
 }
 
 function Admin() {
@@ -714,6 +948,14 @@ function Admin() {
   const [adminLiveData, setAdminLiveData] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [accountDirectoryPage, setAccountDirectoryPage] = useState(1);
+  const [managedUsersPage, setManagedUsersPage] = useState(1);
+  const [batchPreviewPage, setBatchPreviewPage] = useState(1);
+  const [batchGroupsPage, setBatchGroupsPage] = useState(1);
+  const [batchOverwritePage, setBatchOverwritePage] = useState(1);
+  const [batchSkippedPage, setBatchSkippedPage] = useState(1);
+  const [archiveViewerPage, setArchiveViewerPage] = useState(1);
+  const [batchSuccessSkippedPage, setBatchSuccessSkippedPage] = useState(1);
   const [userForm, setUserForm] = useState(INITIAL_USER_FORM);
   const [userMessage, setUserMessage] = useState('');
   const [userError, setUserError] = useState('');
@@ -721,6 +963,7 @@ function Admin() {
   const [batchRows, setBatchRows] = useState([]);
   const [batchResult, setBatchResult] = useState('');
   const [batchImportPlan, setBatchImportPlan] = useState(null);
+  const [selectedBatchOverwriteKeys, setSelectedBatchOverwriteKeys] = useState([]);
   const [batchWorkbookPreview, setBatchWorkbookPreview] = useState(null);
   const [selectedBatchPreviewSheet, setSelectedBatchPreviewSheet] = useState('');
   const [showBatchDocumentPreview, setShowBatchDocumentPreview] = useState(false);
@@ -728,6 +971,7 @@ function Admin() {
   const [batchActionModal, setBatchActionModal] = useState(null);
   const [batchNoticeModal, setBatchNoticeModal] = useState(null);
   const [archiveActionModal, setArchiveActionModal] = useState(null);
+  const [batchImportProgress, setBatchImportProgress] = useState(null);
   const [batchUploadContext, setBatchUploadContext] = useState(INITIAL_UPLOAD_CONTEXT);
   const [selectedAccountUploadId, setSelectedAccountUploadId] = useState('');
   const [selectedArchivedAccountUploadId, setSelectedArchivedAccountUploadId] = useState('');
@@ -743,12 +987,12 @@ function Admin() {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [userAdminMessage, setUserAdminMessage] = useState('');
   const [passwordResetToast, setPasswordResetToast] = useState(null);
+  const [passwordCredentialsCopied, setPasswordCredentialsCopied] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [floors, setFloors] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [floorForm, setFloorForm] = useState(INITIAL_FLOOR_FORM);
   const [roomForm, setRoomForm] = useState(INITIAL_ROOM_FORM);
-  const [roomMessage, setRoomMessage] = useState('');
 
   useEffect(() => {
     const storedUser = localStorage.getItem('currentUser');
@@ -919,6 +1163,8 @@ function Admin() {
       [student.name, student.studentNumber, student.email, student.status].some((value) => String(value || '').toLowerCase().includes(term))
     );
   }, [liveStudentRows, searchTerm]);
+  const visibleStudents = useMemo(() => paginateItems(filteredStudents, accountDirectoryPage), [filteredStudents, accountDirectoryPage]);
+  const visibleFaculty = useMemo(() => paginateItems(filteredFaculty, accountDirectoryPage), [filteredFaculty, accountDirectoryPage]);
 
   const dashboardInsights = useMemo(() => {
     const facultiesById = adminLiveData.faculties || {};
@@ -1005,6 +1251,18 @@ function Admin() {
         .some((value) => String(value || '').toLowerCase().includes(term))
     );
   }, [managedUsers, userSearchTerm]);
+  const visibleManagedUsers = useMemo(() => paginateItems(filteredManagedUsers, managedUsersPage), [filteredManagedUsers, managedUsersPage]);
+  const visibleBatchRows = useMemo(() => paginateItems(batchRows, batchPreviewPage), [batchRows, batchPreviewPage]);
+  const visibleOverwriteRows = useMemo(() => paginateItems(batchImportPlan?.overwriteRows || [], batchOverwritePage), [batchImportPlan, batchOverwritePage]);
+  const visibleSkippedRows = useMemo(() => paginateItems(batchImportPlan?.skippedRows || [], batchSkippedPage), [batchImportPlan, batchSkippedPage]);
+
+  useEffect(() => setAccountDirectoryPage(1), [searchTerm, userForm.role]);
+  useEffect(() => setManagedUsersPage(1), [userSearchTerm]);
+  useEffect(() => setBatchPreviewPage(1), [batchRows]);
+  useEffect(() => {
+    setBatchOverwritePage(1);
+    setBatchSkippedPage(1);
+  }, [batchImportPlan]);
 
   const accountUploadGroups = useMemo(() => {
     const uploadRecords = adminLiveData.account_uploads || {};
@@ -1050,6 +1308,7 @@ function Admin() {
       }))
       .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
   }, [adminLiveData]);
+  const visibleAccountUploadGroups = useMemo(() => paginateItems(accountUploadGroups, batchGroupsPage), [accountUploadGroups, batchGroupsPage]);
 
   const manageableAccountUploadGroups = useMemo(
     () => accountUploadGroups.filter((group) => !['archived', 'deleted'].includes(group.status)),
@@ -1098,6 +1357,10 @@ function Admin() {
       })
       .sort((a, b) => String(a.role).localeCompare(String(b.role)) || String(a.lastName).localeCompare(String(b.lastName)));
   }, [adminLiveData, archivedAccountUploadGroups, selectedArchivedAccountUploadId]);
+  const visibleArchiveViewerRows = useMemo(() => paginateItems(accountArchiveViewerRows, archiveViewerPage), [accountArchiveViewerRows, archiveViewerPage]);
+  const visibleBatchSuccessSkippedRows = useMemo(() => paginateItems(batchSuccessModal?.skippedRows || [], batchSuccessSkippedPage), [batchSuccessModal, batchSuccessSkippedPage]);
+  useEffect(() => setArchiveViewerPage(1), [selectedArchivedAccountUploadId]);
+  useEffect(() => setBatchSuccessSkippedPage(1), [batchSuccessModal]);
 
   const selectedArchivedAccountUpload = useMemo(() => {
     if (!selectedArchivedAccountUploadId) return null;
@@ -1165,8 +1428,15 @@ function Admin() {
         const userId = user.user_id || key;
         const roleIds = normalizeAssignedRoles(Array.isArray(user.role_ids) && user.role_ids.length ? user.role_ids : [user.role_id || 'student']);
         const primaryRole = roleIds.includes('admin') ? 'admin' : user.role_id || roleIds[0];
-        const profileSource = primaryRole === 'student' ? students : faculties;
-        const profile = Object.values(profileSource).find((item) => item?.user_id === userId) || {};
+        const linked = resolveLinkedProfile({
+          user,
+          userId,
+          email: user.email || user.username,
+          faculties,
+          students,
+          preferredType: primaryRole === 'student' ? 'students' : 'faculties',
+        });
+        const profile = linked?.profile || {};
         return {
           ...user,
           user_key: key,
@@ -1214,9 +1484,72 @@ function Admin() {
     if (duplicateError) throw new Error(duplicateError);
 
     const user = await createProvisionedAuthUser(form.email.trim(), form.password);
-    await update(ref(database), buildUserUpdates(user, form, uploadMeta));
+    const updates = buildUserUpdates(user, form, uploadMeta);
+    if (uploadMeta?.uploadId) {
+      updates[`account_upload_index/${uploadMeta.uploadId}/${user.uid}`] = true;
+    }
+    await update(ref(database), updates);
     addAccountToDuplicateIndex(index, form);
     return user;
+  };
+
+  const overwriteInternalUser = async (entry, uploadMeta, duplicateIndex) => {
+    const { row, target } = entry;
+    if (target.createAccount) {
+      const user = await createProvisionedAuthUser(row.email.trim(), row.password);
+      const updates = buildUserUpdates(user, row, uploadMeta);
+      if (target.displacedAccount) {
+        updates[`users/${target.displacedAccount.key}/profile_id`] = null;
+        updates[`users/${target.displacedAccount.key}/profile_type`] = null;
+        updates[`users/${target.displacedAccount.key}/faculty_id`] = null;
+        updates[`users/${target.displacedAccount.key}/student_number`] = null;
+      }
+      updates[`account_upload_index/${uploadMeta.uploadId}/${user.uid}`] = true;
+      await update(ref(database), updates);
+      addAccountToDuplicateIndex(duplicateIndex, row);
+      return user.uid;
+    }
+
+    const generatedUpdates = buildUserUpdates({ uid: target.userId }, row, uploadMeta);
+    const generatedUserPath = `users/${target.userId}`;
+    const generatedUser = generatedUpdates[generatedUserPath] || {};
+    delete generatedUpdates[generatedUserPath];
+
+    const linkedBefore = resolveLinkedProfile({
+      user: target.user,
+      userId: target.userId,
+      email: target.user.email || target.user.username,
+      faculties: adminLiveData.faculties || {},
+      students: adminLiveData.students || {},
+      preferredType: target.user.role_id === 'student' ? 'students' : 'faculties',
+    });
+    const nextProfileType = row.role === 'student' ? 'students' : 'faculties';
+    const nextProfileKey = sanitizeId(row.role === 'student' ? row.studentNumber : row.facultyId);
+
+    if (linkedBefore && (linkedBefore.type !== nextProfileType || linkedBefore.key !== nextProfileKey)) {
+      generatedUpdates[`${linkedBefore.type}/${linkedBefore.key}/user_id`] = null;
+    }
+
+    generatedUpdates[`users/${target.key}`] = {
+      ...target.user,
+      ...generatedUser,
+      user_id: target.userId,
+      created_date: target.user.created_date || generatedUser.created_date,
+      updated_date: new Date().toISOString(),
+    };
+    if (target.user.account_upload_id && target.user.account_upload_id !== uploadMeta.uploadId) {
+      generatedUpdates[`account_upload_index/${target.user.account_upload_id}/${target.userId}`] = null;
+    }
+    if (target.displacedAccount && target.displacedAccount.userId !== target.userId) {
+      generatedUpdates[`users/${target.displacedAccount.key}/profile_id`] = null;
+      generatedUpdates[`users/${target.displacedAccount.key}/profile_type`] = null;
+      generatedUpdates[`users/${target.displacedAccount.key}/faculty_id`] = null;
+      generatedUpdates[`users/${target.displacedAccount.key}/student_number`] = null;
+    }
+    generatedUpdates[`account_upload_index/${uploadMeta.uploadId}/${target.userId}`] = true;
+
+    await update(ref(database), generatedUpdates);
+    return target.userId;
   };
 
   const handleCreateUser = async (event) => {
@@ -1259,6 +1592,8 @@ function Admin() {
       setSelectedBatchPreviewSheet(workbookPreview.sheets[0]?.name || '');
       setShowBatchDocumentPreview(false);
       setBatchImportPlan(null);
+      setSelectedBatchOverwriteKeys([]);
+      setBatchImportProgress(null);
       setBatchSuccessModal(null);
       setBatchResult(`${rows.length} row${rows.length === 1 ? '' : 's'} ready for review.`);
     } catch (error) {
@@ -1267,6 +1602,8 @@ function Admin() {
       setSelectedBatchPreviewSheet('');
       setShowBatchDocumentPreview(false);
       setBatchImportPlan(null);
+      setSelectedBatchOverwriteKeys([]);
+      setBatchImportProgress(null);
       setBatchSuccessModal(null);
       setBatchResult(error.message || 'Unable to read the uploaded file.');
     }
@@ -1295,8 +1632,9 @@ function Admin() {
       const duplicateIndex = await fetchAccountDuplicateIndex();
       const plan = buildBatchImportPlan(batchRows, duplicateIndex);
       setBatchImportPlan(plan);
+      setSelectedBatchOverwriteKeys(plan.overwriteRows.map(overwriteRowKey));
       setBatchResult(
-        `Validation complete. ${plan.acceptedRows.length} row${plan.acceptedRows.length === 1 ? '' : 's'} can be imported.${plan.skippedRows.length ? ` ${plan.skippedRows.length} duplicate/invalid row${plan.skippedRows.length === 1 ? '' : 's'} will be skipped.` : ''}`
+        `Validation complete. ${plan.acceptedRows.length} new row${plan.acceptedRows.length === 1 ? '' : 's'}, ${plan.overwriteRows.length} existing row${plan.overwriteRows.length === 1 ? '' : 's'}, and ${plan.skippedRows.length} blocked row${plan.skippedRows.length === 1 ? '' : 's'}.`
       );
     } catch (error) {
       setBatchResult(error.message || 'Unable to validate uploaded accounts.');
@@ -1306,11 +1644,29 @@ function Admin() {
   };
 
   const handleConfirmBatchImport = async () => {
-    if (!batchImportPlan?.acceptedRows?.length) return;
+    const selectedOverwriteKeys = new Set(selectedBatchOverwriteKeys);
+    const rowsToOverwrite = (batchImportPlan?.overwriteRows || []).filter((item) => (
+      selectedOverwriteKeys.has(overwriteRowKey(item))
+    ));
+    if (!batchImportPlan?.acceptedRows?.length && !rowsToOverwrite.length) return;
 
     setIsUploadingBatch(true);
     let created = 0;
+    let overwritten = 0;
+    let completed = 0;
     const failed = [];
+    const importJobs = [
+      ...batchImportPlan.acceptedRows.map((row) => ({ type: 'create', row })),
+      ...rowsToOverwrite.map((entry) => ({ type: 'overwrite', entry })),
+    ];
+    setBatchImportProgress({
+      phase: 'Preparing account import',
+      completed: 0,
+      total: importJobs.length,
+      created: 0,
+      overwritten: 0,
+      failed: 0,
+    });
 
     try {
       const duplicateIndex = await fetchAccountDuplicateIndex();
@@ -1329,18 +1685,53 @@ function Admin() {
         status: uploadStatus,
       };
 
-      for (const row of batchImportPlan.acceptedRows) {
+      setBatchImportProgress((current) => ({
+        ...current,
+        phase: 'Creating and updating accounts',
+      }));
+      await runWithConcurrency(importJobs, 4, async (job) => {
         try {
-          const user = await createInternalUser(row, duplicateIndex, uploadMeta);
-          await update(ref(database), {
-            [`account_upload_index/${uploadId}/${user.uid}`]: true,
-          });
-          created += 1;
+          if (job.type === 'create') {
+            await createInternalUser(job.row, duplicateIndex, uploadMeta);
+            created += 1;
+          } else {
+            await overwriteInternalUser(job.entry, uploadMeta, duplicateIndex);
+            overwritten += 1;
+          }
         } catch (error) {
-          failed.push(`Row ${row.__rowNumber || '?'}: ${error.message}`);
+          const rowNumber = job.type === 'create'
+            ? job.row.__rowNumber
+            : job.entry.rowNumber;
+          failed.push(`Row ${rowNumber || '?'}: ${error.message}`);
+        } finally {
+          completed += 1;
+          setBatchImportProgress({
+            phase: 'Creating and updating accounts',
+            completed,
+            total: importJobs.length,
+            created,
+            overwritten,
+            failed: failed.length,
+          });
         }
-      }
+      });
 
+      const deferredOverwriteRows = batchImportPlan.overwriteRows.filter((item) => (
+        !selectedOverwriteKeys.has(overwriteRowKey(item))
+      ));
+      const finalSkippedRows = [
+        ...batchImportPlan.skippedRows,
+        ...deferredOverwriteRows.map((entry) => ({
+          rowNumber: entry.rowNumber,
+          row: entry.row,
+          issues: ['Existing account was not overwritten.'],
+        })),
+      ];
+
+      setBatchImportProgress((current) => ({
+        ...current,
+        phase: 'Finalizing import',
+      }));
       await update(ref(database), {
         [`account_uploads/${uploadId}`]: {
           account_upload_id: uploadId,
@@ -1350,39 +1741,52 @@ function Admin() {
           uploaded_by: uploadMeta.importedBy,
           uploaded_by_name: uploadMeta.importedByName,
           created_count: created,
-          skipped_count: batchImportPlan.skippedRows.length,
+          overwritten_count: overwritten,
+          skipped_count: finalSkippedRows.length,
           failed_count: failed.length,
           status: uploadStatus,
         },
       });
 
-      const skippedSummary = formatBatchSkippedSummary(batchImportPlan.skippedRows);
+      const skippedSummary = formatBatchSkippedSummary(finalSkippedRows);
       setBatchResult(
         uploadStatus === 'active'
-          ? `Import finished. Created ${created} active account${created === 1 ? '' : 's'} and marked this upload active.`
-          : `Import finished. Created ${created} active account${created === 1 ? '' : 's'}. Upload group is inactive until you choose Set Active.`
+          ? `Import finished. Created ${created} and overwrote ${overwritten} account${created + overwritten === 1 ? '' : 's'}; this upload is active.`
+          : `Import finished. Created ${created} and overwrote ${overwritten} account${created + overwritten === 1 ? '' : 's'}. Upload group is inactive until you choose Set Active.`
       );
       setBatchSuccessModal({
         created,
-        skippedRows: batchImportPlan.skippedRows,
+        overwritten,
+        skippedRows: finalSkippedRows,
         skippedSummary,
         failed,
       });
       setBatchImportPlan(null);
+      setSelectedBatchOverwriteKeys([]);
+      setBatchImportProgress(null);
       await loadManagedUsers();
     } catch (error) {
       setBatchResult(error.message || 'Unable to import batch accounts.');
+      setBatchImportProgress((current) => current ? {
+        ...current,
+        phase: 'Import stopped',
+      } : null);
     } finally {
       setIsUploadingBatch(false);
     }
   };
 
   const handleCancelBatchImport = () => {
+    if (isUploadingBatch) return;
     setBatchImportPlan(null);
+    setSelectedBatchOverwriteKeys([]);
+    setBatchImportProgress(null);
   };
 
   const handleCloseBatchSuccess = () => {
     setBatchSuccessModal(null);
+    setSelectedBatchOverwriteKeys([]);
+    setBatchImportProgress(null);
   };
 
   const buildAccountGroupStatusUpdates = (group, status, timestamp) => {
@@ -1393,8 +1797,12 @@ function Admin() {
     [...group.userIds].forEach((userId) => {
       const userRecord = Object.entries(adminLiveData.users || {}).find(([, user]) => user?.user_id === userId);
       const userKey = userRecord?.[0] || userId;
-      const studentEntry = Object.entries(students).find(([, student]) => student?.user_id === userId);
-      const facultyEntry = Object.entries(faculties).find(([, faculty]) => faculty?.user_id === userId);
+      const { studentEntry, facultyEntry } = resolveAccountProfileEntries(
+        userId,
+        userRecord?.[1],
+        students,
+        faculties,
+      );
       const timestampField = status === 'active' ? 'activated_at'
         : status === 'archived' ? 'archived_at'
           : 'deactivated_at';
@@ -1528,13 +1936,22 @@ function Admin() {
       userIds.forEach((userId) => {
         const userRecord = Object.entries(adminLiveData.users || {}).find(([, user]) => user?.user_id === userId);
         const userKey = userRecord?.[0] || userId;
-        const studentEntry = Object.entries(students).find(([, student]) => student?.user_id === userId);
-        const facultyEntry = Object.entries(faculties).find(([, faculty]) => faculty?.user_id === userId);
+        const { studentEntry, facultyEntry } = resolveAccountProfileEntries(
+          userId,
+          userRecord?.[1],
+          students,
+          faculties,
+        );
         updates[`users/${userKey}`] = null;
-        if (studentEntry) updates[`students/${studentEntry[0]}`] = null;
-        if (facultyEntry) updates[`faculties/${facultyEntry[0]}`] = null;
+        addProfileDeletionUpdates(updates, studentEntry, facultyEntry);
         updates[`account_upload_index/${selectedAccountUploadId}/${userId}`] = null;
       });
+      addUploadedProfileDeletionUpdates(
+        updates,
+        selectedAccountUploadId,
+        students,
+        faculties,
+      );
     } else {
       const status = action === 'archive' ? 'archived' : 'inactive';
       Object.assign(updates, buildAccountGroupStatusUpdates(selectedGroup, status, now));
@@ -1689,13 +2106,22 @@ function Admin() {
     userIds.forEach((userId) => {
       const userRecord = Object.entries(adminLiveData.users || {}).find(([, user]) => user?.user_id === userId);
       const userKey = userRecord?.[0] || userId;
-      const studentEntry = Object.entries(students).find(([, student]) => student?.user_id === userId);
-      const facultyEntry = Object.entries(faculties).find(([, faculty]) => faculty?.user_id === userId);
+      const { studentEntry, facultyEntry } = resolveAccountProfileEntries(
+        userId,
+        userRecord?.[1],
+        students,
+        faculties,
+      );
       updates[`users/${userKey}`] = null;
-      if (studentEntry) updates[`students/${studentEntry[0]}`] = null;
-      if (facultyEntry) updates[`faculties/${facultyEntry[0]}`] = null;
+      addProfileDeletionUpdates(updates, studentEntry, facultyEntry);
       updates[`account_upload_index/${selectedGroup.uploadId}/${userId}`] = null;
     });
+    addUploadedProfileDeletionUpdates(
+      updates,
+      selectedGroup.uploadId,
+      students,
+      faculties,
+    );
 
     updates[`account_uploads/${selectedGroup.uploadId}/status`] = 'deleted';
     updates[`account_uploads/${selectedGroup.uploadId}/deleted_at`] = new Date().toISOString();
@@ -1982,11 +2408,16 @@ function Admin() {
 
     setResettingPassword(true);
     setPasswordResetToast(null);
+    setPasswordCredentialsCopied(false);
     try {
       const idToken = await auth.currentUser?.getIdToken(true);
       if (!idToken) throw new Error('Your administrator session has expired. Sign in again.');
 
-      const resetResponse = await fetch('/api/reset-password', {
+      const isLocalDevelopment = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      const resetEndpoint = isLocalDevelopment && import.meta.env.VITE_PASSWORD_RESET_API_URL
+        ? import.meta.env.VITE_PASSWORD_RESET_API_URL
+        : '/api/reset-password';
+      const resetResponse = await fetch(resetEndpoint, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${idToken}`,
@@ -2030,15 +2461,35 @@ function Admin() {
     const value = `Email: ${passwordResetToast.email}\nTemporary password: ${passwordResetToast.temporaryPassword}`;
     try {
       await navigator.clipboard.writeText(value);
+      setPasswordCredentialsCopied(true);
       setUserAdminMessage('Temporary credentials copied.');
     } catch {
+      setPasswordCredentialsCopied(false);
       setUserAdminMessage('Clipboard access was blocked. Select and copy the credentials manually.');
     }
   };
 
+  const showRoomToast = (title, icon = 'success') => Swal.fire({
+    toast: true,
+    position: 'top-end',
+    icon,
+    title,
+    showConfirmButton: false,
+    timer: 2200,
+    timerProgressBar: true,
+  });
+
   const handleSaveFloor = async (event) => {
     event.preventDefault();
+    if (!floorForm.floorName.trim()) {
+      await Swal.fire({ title: 'Floor name required', text: 'Enter a floor name before saving.', icon: 'warning', confirmButtonColor: '#2563eb' });
+      return;
+    }
     const floorId = sanitizeId(floorForm.floorId || floorForm.floorName);
+    if (!floorId) {
+      await Swal.fire({ title: 'Floor ID required', text: 'Enter a valid Floor ID or Floor Name.', icon: 'warning', confirmButtonColor: '#2563eb' });
+      return;
+    }
     const floorRecord = {
       floor_id: floorId,
       floor_name: floorForm.floorName.trim(),
@@ -2046,10 +2497,14 @@ function Admin() {
       status: floorForm.status,
     };
 
-    await update(ref(database), { [`floors/${floorId}`]: floorRecord });
-    setFloors((current) => [...current.filter((floor) => floor.floor_id !== floorId), floorRecord].sort((a, b) => a.sort_order - b.sort_order));
-    setFloorForm(INITIAL_FLOOR_FORM);
-    setRoomMessage('Floor saved.');
+    try {
+      await update(ref(database), { [`floors/${floorId}`]: floorRecord });
+      setFloors((current) => [...current.filter((floor) => floor.floor_id !== floorId), floorRecord].sort((a, b) => a.sort_order - b.sort_order));
+      setFloorForm(INITIAL_FLOOR_FORM);
+      showRoomToast('Floor saved successfully.');
+    } catch (error) {
+      await Swal.fire({ title: 'Unable to save floor', text: error.message || 'Please try again.', icon: 'error', confirmButtonColor: '#2563eb' });
+    }
   };
 
   const handleEditFloor = (floor) => {
@@ -2059,21 +2514,52 @@ function Admin() {
       sortOrder: floor.sort_order || '',
       status: floor.status || 'active',
     });
-    setRoomMessage('Editing floor. Save changes when ready.');
+    showRoomToast('Editing floor. Save changes when ready.', 'info');
   };
 
   const handleDeleteFloor = async (floorId) => {
-    if (!window.confirm('Delete this floor? Rooms using this floor will keep their current floor text.')) return;
+    const confirmation = await Swal.fire({
+      title: 'Delete this floor?',
+      text: 'Rooms using this floor will keep their current floor text.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Delete floor',
+      cancelButtonText: 'Keep floor',
+      confirmButtonColor: '#dc2626',
+    });
+    if (!confirmation.isConfirmed) return;
 
-    await remove(ref(database, `floors/${floorId}`));
-    setFloors((current) => current.filter((floor) => floor.floor_id !== floorId));
-    setFloorForm((current) => current.floorId === floorId ? INITIAL_FLOOR_FORM : current);
-    setRoomMessage('Floor deleted.');
+    try {
+      await remove(ref(database, `floors/${floorId}`));
+      setFloors((current) => current.filter((floor) => floor.floor_id !== floorId));
+      setFloorForm((current) => current.floorId === floorId ? INITIAL_FLOOR_FORM : current);
+      showRoomToast('Floor deleted.');
+    } catch (error) {
+      await Swal.fire({ title: 'Unable to delete floor', text: error.message || 'Please try again.', icon: 'error', confirmButtonColor: '#2563eb' });
+    }
   };
 
   const handleSaveRoom = async (event) => {
     event.preventDefault();
+    const missingRoomFields = [
+      ['Room Name', roomForm.roomName],
+      ['Building', roomForm.building],
+      ['Floor', roomForm.floor],
+    ].filter(([, value]) => !String(value || '').trim()).map(([label]) => label);
+    if (missingRoomFields.length) {
+      await Swal.fire({
+        title: 'Complete the required fields',
+        text: `Please enter ${missingRoomFields.join(', ')} before saving the room.`,
+        icon: 'warning',
+        confirmButtonColor: '#2563eb',
+      });
+      return;
+    }
     const roomId = sanitizeId(roomForm.roomId || roomForm.roomName);
+    if (!roomId) {
+      await Swal.fire({ title: 'Room ID required', text: 'Enter a valid Room ID or Room Name.', icon: 'warning', confirmButtonColor: '#2563eb' });
+      return;
+    }
     const roomRecord = {
       room_id: roomId,
       room_name: roomForm.roomName.trim(),
@@ -2082,10 +2568,14 @@ function Admin() {
       room_status: roomForm.roomStatus,
     };
 
-    await update(ref(database), { [`rooms/${roomId}`]: roomRecord });
-    setRooms((current) => [...current.filter((room) => room.room_id !== roomId), roomRecord].sort((a, b) => a.room_name.localeCompare(b.room_name)));
-    setRoomForm(INITIAL_ROOM_FORM);
-    setRoomMessage('Room saved.');
+    try {
+      await update(ref(database), { [`rooms/${roomId}`]: roomRecord });
+      setRooms((current) => [...current.filter((room) => room.room_id !== roomId), roomRecord].sort((a, b) => a.room_name.localeCompare(b.room_name)));
+      setRoomForm(INITIAL_ROOM_FORM);
+      showRoomToast('Room saved successfully.');
+    } catch (error) {
+      await Swal.fire({ title: 'Unable to save room', text: error.message || 'Please try again.', icon: 'error', confirmButtonColor: '#2563eb' });
+    }
   };
 
   const handleEditRoom = (room) => {
@@ -2096,24 +2586,42 @@ function Admin() {
       floor: room.floor || '',
       roomStatus: room.room_status || 'Available',
     });
-    setRoomMessage('Editing room. Save changes when ready.');
+    showRoomToast('Editing room. Save changes when ready.', 'info');
   };
 
   const handleSetRoomStatus = async (room, roomStatus) => {
-    await update(ref(database), { [`rooms/${room.room_id}/room_status`]: roomStatus });
-    setRooms((current) => current.map((item) =>
-      item.room_id === room.room_id ? { ...item, room_status: roomStatus } : item
-    ));
-    setRoomMessage(`${room.room_name || room.room_id} set to ${roomStatus}.`);
+    try {
+      await update(ref(database), { [`rooms/${room.room_id}/room_status`]: roomStatus });
+      setRooms((current) => current.map((item) =>
+        item.room_id === room.room_id ? { ...item, room_status: roomStatus } : item
+      ));
+      showRoomToast(`${room.room_name || room.room_id} set to ${roomStatus}.`);
+    } catch (error) {
+      await Swal.fire({ title: 'Unable to update room status', text: error.message || 'Please try again.', icon: 'error', confirmButtonColor: '#2563eb' });
+    }
   };
 
   const handleDeleteRoom = async (roomId) => {
-    if (!window.confirm('Delete this room?')) return;
+    const room = rooms.find((item) => item.room_id === roomId);
+    const confirmation = await Swal.fire({
+      title: 'Delete this room?',
+      text: `${room?.room_name || roomId} will be removed from the room list.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Delete room',
+      cancelButtonText: 'Keep room',
+      confirmButtonColor: '#dc2626',
+    });
+    if (!confirmation.isConfirmed) return;
 
-    await remove(ref(database, `rooms/${roomId}`));
-    setRooms((current) => current.filter((room) => room.room_id !== roomId));
-    setRoomForm((current) => current.roomId === roomId ? INITIAL_ROOM_FORM : current);
-    setRoomMessage('Room deleted.');
+    try {
+      await remove(ref(database, `rooms/${roomId}`));
+      setRooms((current) => current.filter((item) => item.room_id !== roomId));
+      setRoomForm((current) => current.roomId === roomId ? INITIAL_ROOM_FORM : current);
+      showRoomToast('Room deleted.');
+    } catch (error) {
+      await Swal.fire({ title: 'Unable to delete room', text: error.message || 'Please try again.', icon: 'error', confirmButtonColor: '#2563eb' });
+    }
   };
 
   const renderNavigation = () => (
@@ -2356,15 +2864,15 @@ function Admin() {
     <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]" data-tour="admin-accounts">
       <SectionPanel title="Internal Signup" description="Create student and faculty accounts from the admin console.">
         <form className="space-y-4" onSubmit={handleCreateUser}>
-          <Field label="Account Type">
-            <select className={fieldClass()} value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}>
+          <Field label="Account Type" required>
+            <select className={fieldClass()} value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })} required>
               <option value="student">Student</option>
               <option value="faculty">Faculty</option>
             </select>
           </Field>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label={userForm.role === 'student' ? 'Student Number' : 'Faculty ID'}>
+          <Field label={userForm.role === 'student' ? 'Student Number' : 'Faculty ID'} required>
               <input
                 className={fieldClass()}
                 value={userForm.role === 'student' ? userForm.studentNumber : userForm.facultyId}
@@ -2373,6 +2881,7 @@ function Admin() {
                   [userForm.role === 'student' ? 'studentNumber' : 'facultyId']: event.target.value,
                 })}
                 placeholder={userForm.role === 'student' ? '02000123456' : 'NVS0690F'}
+                required
               />
             </Field>
             <Field label="Department">
@@ -2381,23 +2890,23 @@ function Admin() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="First Name">
-              <input className={fieldClass()} value={userForm.firstName} onChange={(event) => setUserForm({ ...userForm, firstName: event.target.value })} />
+            <Field label="First Name" required>
+              <input className={fieldClass()} value={userForm.firstName} onChange={(event) => setUserForm({ ...userForm, firstName: event.target.value })} required />
             </Field>
             <Field label="Middle Name">
               <input className={fieldClass()} value={userForm.middleName} onChange={(event) => setUserForm({ ...userForm, middleName: event.target.value })} />
             </Field>
-            <Field label="Last Name">
-              <input className={fieldClass()} value={userForm.lastName} onChange={(event) => setUserForm({ ...userForm, lastName: event.target.value })} />
+            <Field label="Last Name" required>
+              <input className={fieldClass()} value={userForm.lastName} onChange={(event) => setUserForm({ ...userForm, lastName: event.target.value })} required />
             </Field>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Email">
-              <input className={fieldClass()} type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} placeholder="name@novaliches.sti.edu.ph" />
+            <Field label="Email" required>
+              <input className={fieldClass()} type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} placeholder="name@novaliches.sti.edu.ph" required />
             </Field>
-            <Field label="Temporary Password">
-              <input className={fieldClass()} type="text" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} />
+            <Field label="Temporary Password" required>
+              <input className={fieldClass()} type="text" minLength={8} value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} required />
             </Field>
           </div>
 
@@ -2440,7 +2949,7 @@ function Admin() {
             <tbody className="divide-y divide-slate-100">
               {userForm.role === 'student' ? (
                 <>
-                  {filteredStudents.map((student) => (
+                  {visibleStudents.map((student) => (
                     <tr key={`${student.studentNumber}-${student.email}`}>
                       <td className="py-3 pr-4 font-medium text-slate-950">{student.name}</td>
                       <td className="py-3 pr-4 text-slate-600">{student.studentNumber}</td>
@@ -2456,7 +2965,7 @@ function Admin() {
                 </>
               ) : (
                 <>
-                  {filteredFaculty.map((faculty) => (
+                  {visibleFaculty.map((faculty) => (
                     <tr key={faculty.name}>
                       <td className="py-3 pr-4 font-medium text-slate-950">{faculty.name}</td>
                       <td className="py-3 pr-4 text-slate-600">{faculty.department}</td>
@@ -2474,6 +2983,7 @@ function Admin() {
             </tbody>
           </table>
         </div>
+        <Pagination page={accountDirectoryPage} totalItems={userForm.role === 'student' ? filteredStudents.length : filteredFaculty.length} onPageChange={setAccountDirectoryPage} />
       </SectionPanel>
     </div>
   );
@@ -2501,37 +3011,32 @@ function Admin() {
         }
       >
         {userAdminMessage && <p className="mb-4 rounded-md bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{userAdminMessage}</p>}
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead>
-              <tr className="text-left text-xs font-semibold uppercase text-slate-500">
-                <th className="pb-3 pr-4">Role</th>
-                {PERMISSIONS.map((permission) => (
-                  <th key={permission.permission_id} className="pb-3 pr-4">{permission.permission_name}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {Object.values(ROLES).map((role) => (
-                <tr key={role.role_id}>
-                  <td className="py-3 pr-4 font-semibold text-slate-950">{role.role_name}</td>
-                  {PERMISSIONS.map((permission) => {
-                    const id = rolePermissionId(role.role_id, permission.permission_id);
-                    return (
-                      <td key={id} className="py-3 pr-4">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                          checked={Boolean(rolePermissions[id])}
-                          onChange={() => handleRolePermissionToggle(role.role_id, permission.permission_id)}
-                        />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {Object.values(ROLES).map((role) => (
+            <section key={role.role_id} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50/70">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+                <h3 className="text-sm font-bold text-slate-900">{role.role_name}</h3>
+                <span className="text-xs text-slate-500">{PERMISSIONS.filter((permission) => rolePermissions[rolePermissionId(role.role_id, permission.permission_id)]).length} of {PERMISSIONS.length} enabled</span>
+              </div>
+              <div className="space-y-1 p-3">
+                {PERMISSIONS.map((permission) => {
+                  const id = rolePermissionId(role.role_id, permission.permission_id);
+                  const checked = Boolean(rolePermissions[id]);
+                  return (
+                    <label key={id} className={`flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-xs font-medium transition ${checked ? 'border-blue-100 bg-blue-50 text-blue-900' : 'border-transparent bg-white text-slate-600 hover:border-slate-200'}`}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        checked={checked}
+                        onChange={() => handleRolePermissionToggle(role.role_id, permission.permission_id)}
+                      />
+                      {permission.permission_name}
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       </SectionPanel>
 
@@ -2552,8 +3057,8 @@ function Admin() {
             <div className="border-b border-slate-200 px-4 py-3">
               <p className="text-xs font-semibold uppercase text-slate-500">{filteredManagedUsers.length} users</p>
             </div>
-            <div className="max-h-[36rem] overflow-y-auto">
-              {filteredManagedUsers.map((user) => (
+            <div>
+              {visibleManagedUsers.map((user) => (
                 <button
                   key={user.user_id}
                   type="button"
@@ -2580,6 +3085,7 @@ function Admin() {
                 <p className="px-4 py-6 text-sm text-slate-500">No users found.</p>
               )}
             </div>
+            <Pagination page={managedUsersPage} totalItems={filteredManagedUsers.length} onPageChange={setManagedUsersPage} />
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
@@ -2790,7 +3296,7 @@ function Admin() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {batchRows.slice(0, 8).map((row, index) => (
+                {visibleBatchRows.map((row, index) => (
                   <tr key={`${row.email}-${index}`}>
                     <td className="py-3 pr-4 capitalize text-slate-600">{row.role}</td>
                     <td className="py-3 pr-4 text-slate-600">{row.role === 'student' ? row.studentNumber : row.facultyId}</td>
@@ -2806,6 +3312,7 @@ function Admin() {
               </tbody>
             </table>
             </div>
+            <Pagination page={batchPreviewPage} totalItems={batchRows.length} onPageChange={setBatchPreviewPage} />
           </div>
         </div>
         <div className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -2866,7 +3373,7 @@ function Admin() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {accountUploadGroups.slice(0, 8).map((group) => (
+                {visibleAccountUploadGroups.map((group) => (
                   <tr key={group.uploadId}>
                     <td className="py-3 pr-4 font-medium text-slate-950">{group.schoolYear || 'Unknown'}</td>
                     <td className="py-3 pr-4 text-slate-600">{group.term || 'Unknown'}</td>
@@ -2883,6 +3390,7 @@ function Admin() {
               </tbody>
             </table>
           </div>
+          <Pagination page={batchGroupsPage} totalItems={accountUploadGroups.length} onPageChange={setBatchGroupsPage} />
         </div>
       </SectionPanel>
     </div>
@@ -2896,8 +3404,8 @@ function Admin() {
             <Field label="Floor ID">
               <input className={fieldClass()} value={floorForm.floorId} onChange={(event) => setFloorForm({ ...floorForm, floorId: event.target.value })} placeholder="3f" />
             </Field>
-            <Field label="Floor Name">
-              <input className={fieldClass()} value={floorForm.floorName} onChange={(event) => setFloorForm({ ...floorForm, floorName: event.target.value })} placeholder="3rd Floor" />
+            <Field label="Floor Name" required>
+              <input className={fieldClass()} value={floorForm.floorName} onChange={(event) => setFloorForm({ ...floorForm, floorName: event.target.value })} placeholder="3rd Floor" required />
             </Field>
             <Field label="Sort Order">
               <input className={fieldClass()} type="number" value={floorForm.sortOrder} onChange={(event) => setFloorForm({ ...floorForm, sortOrder: event.target.value })} />
@@ -2925,14 +3433,14 @@ function Admin() {
             <Field label="Room ID">
               <input className={fieldClass()} value={roomForm.roomId} onChange={(event) => setRoomForm({ ...roomForm, roomId: event.target.value })} placeholder="room-301" />
             </Field>
-            <Field label="Room Name">
-              <input className={fieldClass()} value={roomForm.roomName} onChange={(event) => setRoomForm({ ...roomForm, roomName: event.target.value })} placeholder="Room 301" />
+            <Field label="Room Name" required>
+              <input className={fieldClass()} value={roomForm.roomName} onChange={(event) => setRoomForm({ ...roomForm, roomName: event.target.value })} placeholder="Room 301" required />
             </Field>
-            <Field label="Building">
-              <input className={fieldClass()} value={roomForm.building} onChange={(event) => setRoomForm({ ...roomForm, building: event.target.value })} placeholder="Main Building" />
+            <Field label="Building" required>
+              <input className={fieldClass()} value={roomForm.building} onChange={(event) => setRoomForm({ ...roomForm, building: event.target.value })} placeholder="Main Building" required />
             </Field>
-            <Field label="Floor">
-              <select className={fieldClass()} value={roomForm.floor} onChange={(event) => setRoomForm({ ...roomForm, floor: event.target.value })}>
+            <Field label="Floor" required>
+              <select className={fieldClass()} value={roomForm.floor} onChange={(event) => setRoomForm({ ...roomForm, floor: event.target.value })} required>
                 <option value="">Select floor</option>
                 {floors.map((floor) => <option key={floor.floor_id} value={floor.floor_name}>{floor.floor_name}</option>)}
               </select>
@@ -2957,8 +3465,6 @@ function Admin() {
           </form>
         </SectionPanel>
       </div>
-
-      {roomMessage && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">{roomMessage}</p>}
 
       <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
         <SectionPanel title="Floors">
@@ -3126,7 +3632,7 @@ function Admin() {
               <p className="text-sm font-semibold text-slate-950">Temporary password created</p>
               <p className="mt-1 text-xs text-slate-500">Copy it now. Closing this notice permanently hides it.</p>
             </div>
-            <button type="button" onClick={() => setPasswordResetToast(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close password reset notice">
+            <button type="button" onClick={() => { setPasswordResetToast(null); setPasswordCredentialsCopied(false); }} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close password reset notice">
               <FaTimes className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -3134,44 +3640,152 @@ function Admin() {
             <p className="break-all"><span className="font-semibold">Email:</span> {passwordResetToast.email}</p>
             <p className="mt-2 break-all font-mono"><span className="font-sans font-semibold">Temporary password:</span> {passwordResetToast.temporaryPassword}</p>
           </div>
-          <button type="button" onClick={copyResetCredentials} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
-            <FaCopy className="h-3.5 w-3.5" />
-            Copy credentials
+          <button
+            type="button"
+            onClick={copyResetCredentials}
+            className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold text-white transition-colors ${passwordCredentialsCopied ? 'bg-emerald-600 hover:bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'}`}
+            aria-live="polite"
+          >
+            {passwordCredentialsCopied ? <FaCheckCircle className="h-3.5 w-3.5" /> : <FaCopy className="h-3.5 w-3.5" />}
+            {passwordCredentialsCopied ? 'Copied to clipboard' : 'Copy credentials'}
           </button>
         </div>
       )}
       {batchImportPlan && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-4">
-          <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
               <div>
                 <p className="text-base font-semibold text-slate-950">Review batch import</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Valid rows will be created. Duplicate or invalid rows will be discarded.
+                  Create new accounts, optionally overwrite linked accounts, and block unsafe conflicts.
                 </p>
               </div>
-              <button type="button" onClick={handleCancelBatchImport} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close batch import review">
+              <button type="button" onClick={handleCancelBatchImport} disabled={isUploadingBatch} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Close batch import review">
                 <FaTimes className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="space-y-4 px-6 py-5">
-              <div className="grid gap-3 sm:grid-cols-2">
+            <div className="max-h-[calc(90vh-150px)] space-y-4 overflow-y-auto px-6 py-5">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3">
                   <p className="text-xs font-semibold uppercase text-emerald-700">Ready to import</p>
                   <p className="mt-1 text-2xl font-semibold text-emerald-800">{batchImportPlan.acceptedRows.length}</p>
                 </div>
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase text-blue-700">Can overwrite</p>
+                  <p className="mt-1 text-2xl font-semibold text-blue-800">{batchImportPlan.overwriteRows.length}</p>
+                </div>
                 <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase text-amber-700">Will be skipped</p>
+                  <p className="text-xs font-semibold uppercase text-amber-700">Blocked</p>
                   <p className="mt-1 text-2xl font-semibold text-amber-800">{batchImportPlan.skippedRows.length}</p>
                 </div>
               </div>
+
+              {batchImportProgress && (
+                <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-sm" aria-live="polite">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{batchImportProgress.phase}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {batchImportProgress.completed} of {batchImportProgress.total} accounts processed
+                      </p>
+                    </div>
+                    <span className="text-lg font-bold text-blue-700">
+                      {batchImportProgress.total
+                        ? Math.round((batchImportProgress.completed / batchImportProgress.total) * 100)
+                        : 0}%
+                    </span>
+                  </div>
+                  <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-blue-600 transition-[width] duration-300 ease-out"
+                      style={{
+                        width: `${batchImportProgress.total
+                          ? (batchImportProgress.completed / batchImportProgress.total) * 100
+                          : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-md bg-emerald-50 px-2 py-2 font-semibold text-emerald-700">{batchImportProgress.created} created</div>
+                    <div className="rounded-md bg-blue-50 px-2 py-2 font-semibold text-blue-700">{batchImportProgress.overwritten} updated</div>
+                    <div className="rounded-md bg-red-50 px-2 py-2 font-semibold text-red-700">{batchImportProgress.failed} failed</div>
+                  </div>
+                </div>
+              )}
+
+              {batchImportPlan.overwriteRows.length > 0 && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">Choose accounts to overwrite</p>
+                      <p className="mt-1 max-w-xl text-xs leading-5 text-slate-600">
+                        Selected accounts will receive the new names, roles, IDs, department, email links, and upload grouping. Firebase Authentication passwords are not changed.
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700">
+                        {selectedBatchOverwriteKeys.length} selected
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBatchOverwriteKeys(
+                          batchImportPlan.overwriteRows.map(overwriteRowKey)
+                        )}
+                        disabled={isUploadingBatch}
+                        className="rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBatchOverwriteKeys([])}
+                        disabled={!selectedBatchOverwriteKeys.length || isUploadingBatch}
+                        className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-blue-100 bg-white">
+                    {visibleOverwriteRows.map((item) => {
+                      const selectionKey = overwriteRowKey(item);
+                      const isSelected = selectedBatchOverwriteKeys.includes(selectionKey);
+                      return (
+                        <label
+                          key={`overwrite-${selectionKey}`}
+                          className={`flex cursor-pointer items-start gap-3 border-b px-3 py-2.5 last:border-b-0 ${isSelected ? 'border-blue-100 bg-blue-50/70' : 'border-slate-100 hover:bg-slate-50'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isUploadingBatch}
+                            onChange={() => setSelectedBatchOverwriteKeys((current) => (
+                              current.includes(selectionKey)
+                                ? current.filter((key) => key !== selectionKey)
+                                : [...current, selectionKey]
+                            ))}
+                            className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-blue-600 disabled:cursor-not-allowed"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-slate-900">Row {item.rowNumber}: {item.row.firstName} {item.row.lastName}</span>
+                            <span className="mt-0.5 block truncate text-xs text-slate-500">{item.row.email} | {item.row.studentNumber || item.row.facultyId}</span>
+                            <span className="mt-1 block text-xs text-blue-700">{item.issues.join(' ')}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <Pagination page={batchOverwritePage} totalItems={batchImportPlan.overwriteRows.length} onPageChange={setBatchOverwritePage} />
+                </div>
+              )}
 
               {batchImportPlan.skippedRows.length > 0 && (
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Skipped rows</p>
                   <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
-                    {batchImportPlan.skippedRows.map((item) => (
+                    {visibleSkippedRows.map((item) => (
                       <div key={`${item.rowNumber}-${item.row.email}-${item.row.facultyId}-${item.row.studentNumber}`} className="border-b border-slate-100 px-4 py-3 last:border-b-0">
                         <p className="text-sm font-semibold text-slate-950">Row {item.rowNumber}</p>
                         <p className="mt-1 text-xs text-slate-500">
@@ -3181,27 +3795,28 @@ function Admin() {
                       </div>
                     ))}
                   </div>
+                  <Pagination page={batchSkippedPage} totalItems={batchImportPlan.skippedRows.length} onPageChange={setBatchSkippedPage} />
                 </div>
               )}
 
-              {!batchImportPlan.acceptedRows.length && (
+              {!batchImportPlan.acceptedRows.length && !batchImportPlan.overwriteRows.length && (
                 <p className="rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
-                  No valid rows are available to import. Fix the file and upload again.
+                  No rows can be safely imported or overwritten. Fix the file and upload again.
                 </p>
               )}
             </div>
 
             <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:justify-end">
-              <button type="button" onClick={handleCancelBatchImport} className="rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <button type="button" onClick={handleCancelBatchImport} disabled={isUploadingBatch} className="rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={!batchImportPlan.acceptedRows.length || isUploadingBatch}
+                disabled={(!batchImportPlan.acceptedRows.length && !selectedBatchOverwriteKeys.length) || isUploadingBatch}
                 onClick={handleConfirmBatchImport}
                 className="rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
               >
-                {isUploadingBatch ? 'Importing...' : 'Proceed with Import'}
+                {isUploadingBatch ? 'Importing...' : selectedBatchOverwriteKeys.length ? 'Import Selected' : 'Proceed with Import'}
               </button>
             </div>
           </div>
@@ -3277,7 +3892,7 @@ function Admin() {
                 <div>
                   <p className="text-base font-semibold text-slate-950">Batch import complete</p>
                   <p className="mt-1 text-sm text-slate-500">
-                    Created {batchSuccessModal.created} account{batchSuccessModal.created === 1 ? '' : 's'}.
+                    Created {batchSuccessModal.created} and overwrote {batchSuccessModal.overwritten || 0} account{batchSuccessModal.created + (batchSuccessModal.overwritten || 0) === 1 ? '' : 's'}.
                     {batchSuccessModal.skippedRows.length ? ` Skipped ${batchSuccessModal.skippedRows.length} duplicate/invalid row${batchSuccessModal.skippedRows.length === 1 ? '' : 's'}.` : ''}
                   </p>
                 </div>
@@ -3292,7 +3907,7 @@ function Admin() {
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Skipped rows</p>
                   <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
-                    {batchSuccessModal.skippedRows.map((item) => (
+                    {visibleBatchSuccessSkippedRows.map((item) => (
                       <div key={`${item.rowNumber}-${item.row.email}-${item.row.facultyId}-${item.row.studentNumber}`} className="border-b border-slate-100 px-4 py-3 last:border-b-0">
                         <p className="text-sm font-semibold text-slate-950">Row {item.rowNumber}</p>
                         <p className="mt-1 text-xs text-slate-500">
@@ -3302,6 +3917,7 @@ function Admin() {
                       </div>
                     ))}
                   </div>
+                  <Pagination page={batchSuccessSkippedPage} totalItems={batchSuccessModal.skippedRows.length} onPageChange={setBatchSuccessSkippedPage} />
                 </div>
               )}
 
@@ -3497,9 +4113,9 @@ function Admin() {
                   ))}
                 </div>
                 {accountArchiveViewerRows.length ? (
-                  accountArchiveViewerRows.map((row, index) => (
+                  visibleArchiveViewerRows.map((row, index) => (
                     <div key={`${row.email}-${row.accountId}-${index}`} className="grid grid-cols-[44px_110px_150px_150px_150px_180px_290px_120px] bg-white text-slate-800 odd:bg-green-50/50">
-                      {[index + 3, row.role, row.accountId, row.firstName, row.middleName, row.lastName, row.email, row.status].map((cell, cellIndex) => (
+                      {[(archiveViewerPage - 1) * 10 + index + 3, row.role, row.accountId, row.firstName, row.middleName, row.lastName, row.email, row.status].map((cell, cellIndex) => (
                         <div key={`${cellIndex}-${cell}`} className={`${cellIndex === 0 ? 'bg-slate-100 text-center text-xs font-semibold text-slate-600' : ''} min-h-9 truncate border-r border-b border-slate-300 px-2 py-2`} title={String(cell || '')}>
                           {cell || ''}
                         </div>
@@ -3509,6 +4125,7 @@ function Admin() {
                 ) : (
                   <div className="px-4 py-12 text-center text-sm font-semibold text-slate-500">No archived account rows found for this upload.</div>
                 )}
+                <Pagination page={archiveViewerPage} totalItems={accountArchiveViewerRows.length} onPageChange={setArchiveViewerPage} />
               </div>
             </div>
           </div>

@@ -7,6 +7,9 @@ import { subscribeToPaths } from '../../utils/subscribeToPaths';
 import NotificationBell from '../../components/NotificationBell';
 import ProfileLink from '../../components/ProfileLink';
 import QuickStartGuide, { STUDENT_GUIDE_STEPS } from '../../components/QuickStartGuide';
+import ScheduleDayView from '../../components/ScheduleDayView';
+import Pagination, { paginateItems } from '../../components/Pagination';
+import { sortSchedulesByDayAndTime } from '../../utils/scheduleDisplay';
 import logo from '../../assets/sti_logo.png';
 import { buildTrackerData, getReflectableSchedules } from '../../utils/trackerData';
 
@@ -26,6 +29,7 @@ function Student() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('All');
+  const [facultyPage, setFacultyPage] = useState(1);
   const [currentUser, setCurrentUser] = useState(null);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [facultyLocations, setFacultyLocations] = useState([]);
@@ -87,6 +91,7 @@ function Student() {
               facultyId: schedule.faculty_id,
               facultyName: [faculty.first_name, faculty.middle_name, faculty.last_name].filter(Boolean).join(' '),
               subject: subject.subject_name || subject.subject_code || schedule.subject_name || schedule.subject_id || 'TBD',
+              courseCode: schedule.course_code || subject.subject_code || schedule.subject_code || '',
               day: schedule.day || 'TBD',
               startTime: schedule.start_time || 'TBD',
               endTime: schedule.end_time || 'TBD',
@@ -96,11 +101,10 @@ function Student() {
               term: schedule.term || schedule.semester || '',
               schoolYear: schedule.school_year || '',
             };
-          })
-          .sort((a, b) => String(a.day).localeCompare(String(b.day)) || String(a.startTime).localeCompare(String(b.startTime)));
+          });
 
         setFacultyLocations(locations);
-        setScheduleRows(schedules);
+        setScheduleRows(sortSchedulesByDayAndTime(schedules));
         setLoading(false);
         setError('');
       } catch (err) {
@@ -129,10 +133,15 @@ function Student() {
       return matchesSearch && matchesStatus;
     });
   }, [facultyLocations, searchTerm, selectedStatus]);
+  const visibleFaculty = useMemo(() => paginateItems(filteredData, facultyPage), [filteredData, facultyPage]);
+  useEffect(() => setFacultyPage(1), [searchTerm, selectedStatus]);
 
-  const selectedFacultySchedules = selectedFaculty
-    ? scheduleRows.filter((schedule) => schedule.facultyId === selectedFaculty.id)
-    : [];
+  const selectedFacultySchedules = useMemo(() => (
+    selectedFaculty
+      ? scheduleRows.filter((schedule) => schedule.facultyId === selectedFaculty.id)
+      : []
+  ), [scheduleRows, selectedFaculty]);
+
   const statuses = ['All', 'In-Class', 'Available', 'Offline'];
 
   const closeQuickGuide = () => {
@@ -220,7 +229,7 @@ function Student() {
           </div>
 
           <div className="mb-6">
-            <p className="text-gray-600">Showing {filteredData.length} of {facultyLocations.length} faculty members</p>
+            <p className="text-gray-600">Found {filteredData.length} of {facultyLocations.length} faculty members</p>
           </div>
 
           {loading ? (
@@ -234,11 +243,13 @@ function Student() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-tour="student-cards">
-              {filteredData.map((faculty) => (
+              {visibleFaculty.map((faculty) => (
                 <button
                   key={faculty.id}
                   type="button"
-                  onClick={() => setSelectedFaculty(faculty)}
+                  onClick={() => {
+                    setSelectedFaculty(faculty);
+                  }}
                   className={`min-h-72 overflow-hidden rounded-2xl border border-white/20 border-l-4 bg-white/80 text-left shadow-lg backdrop-blur-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${statusBorders[faculty.status] || statusBorders.Offline}`}
                 >
                   <div className="flex h-full flex-col p-6">
@@ -275,6 +286,10 @@ function Student() {
             </div>
           )}
 
+          {!loading && !error && (
+            <Pagination page={facultyPage} pageSize={10} totalItems={filteredData.length} onPageChange={setFacultyPage} />
+          )}
+
           {!loading && !error && !filteredData.length && (
             <div className="py-12 text-center">
               <MdPeople className="mx-auto h-10 w-10 text-slate-300" />
@@ -286,7 +301,7 @@ function Student() {
 
       {selectedFaculty && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-lg bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-4 bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-5 text-white">
               <div>
                 <h2 className="text-2xl font-bold">{selectedFaculty.name}</h2>
@@ -303,7 +318,7 @@ function Student() {
             </div>
 
             <div className="max-h-[calc(90vh-92px)] overflow-y-auto p-6">
-              <div className="mb-5 flex flex-wrap items-center gap-3">
+              <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 pb-5">
                 <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ring-1 ${statusClasses[selectedFaculty.status] || statusClasses.Offline}`}>
                   {selectedFaculty.statusLabel}
                 </span>
@@ -311,36 +326,22 @@ function Student() {
                 <span className="text-sm text-slate-600">Current room: {selectedFaculty.room}</span>
               </div>
 
-              <h3 className="mb-3 text-lg font-semibold text-slate-950">Faculty Schedule</h3>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead>
-                    <tr className="text-left text-xs font-semibold uppercase text-slate-500">
-                      <th className="pb-3 pr-4">Day</th>
-                      <th className="pb-3 pr-4">Time</th>
-                      <th className="pb-3 pr-4">Subject</th>
-                      <th className="pb-3 pr-4">Section</th>
-                      <th className="pb-3">Room</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {selectedFacultySchedules.map((schedule) => (
-                      <tr key={schedule.scheduleId}>
-                        <td className="py-3 pr-4 font-medium text-slate-900">{schedule.day}</td>
-                        <td className="py-3 pr-4 text-slate-600">{schedule.startTime} - {schedule.endTime}</td>
-                        <td className="py-3 pr-4 text-slate-600">{schedule.subject}</td>
-                        <td className="py-3 pr-4 text-slate-600">{schedule.section}</td>
-                        <td className="py-3 text-slate-600">{schedule.room}</td>
-                      </tr>
-                    ))}
-                    {!selectedFacultySchedules.length && (
-                      <tr>
-                        <td className="py-6 text-sm text-slate-500" colSpan="5">No schedule assigned to this faculty.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">Faculty Schedule</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selectedFacultySchedules.length
+                      ? `${selectedFacultySchedules.length} ${selectedFacultySchedules.length === 1 ? 'class' : 'classes'} in the active schedule`
+                      : 'No schedule assigned to this faculty.'}
+                  </p>
+                </div>
               </div>
+
+              <ScheduleDayView
+                key={selectedFaculty.id}
+                schedules={selectedFacultySchedules}
+                emptyMessage="No schedule assigned to this faculty."
+              />
             </div>
           </div>
         </div>
